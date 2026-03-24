@@ -97,11 +97,15 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
               const SizedBox(height: 28),
               _buildStartFocusCard(),
               const SizedBox(height: 28),
-              _buildSectionHeader('Today\'s Tasks', onSeeAll: () {}),
+              _buildSectionHeader('Today\'s Tasks', onSeeAll: () {
+                context.findAncestorStateOfType<AppShellState>()?.jumpToTab(2);
+              }),
               const SizedBox(height: 12),
               _buildTaskList(),
               const SizedBox(height: 28),
-              _buildSectionHeader('Weekly Progress', onSeeAll: () {}),
+              _buildSectionHeader('Weekly Progress', onSeeAll: () {
+                context.findAncestorStateOfType<AppShellState>()?.jumpToTab(5);
+              }),
               const SizedBox(height: 12),
               _buildWeeklyProgress(),
               const SizedBox(height: 28),
@@ -148,7 +152,14 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
       actions: [
         // Notification bell
         IconButton(
-          onPressed: () {},
+          onPressed: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('No new notifications'),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          },
           icon: Icon(
             Icons.notifications_outlined,
             color: FocusFlowTheme.textSecondary,
@@ -312,7 +323,9 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
                 ),
                 const SizedBox(height: 16),
                 ElevatedButton.icon(
-                  onPressed: () {},
+                  onPressed: () {
+                    context.findAncestorStateOfType<AppShellState>()?.jumpToTab(1);
+                  },
                   icon: const Icon(Icons.play_arrow_rounded, size: 18),
                   label: const Text('Begin'),
                   style: ElevatedButton.styleFrom(
@@ -463,10 +476,10 @@ Widget _buildWeeklyProgress() {
   // ── Quick actions ────────────────────────────
   Widget _buildQuickActionsRow() {
     final actions = [
-      {'icon': Icons.note_alt_outlined,   'label': 'Notes'},
-      {'icon': Icons.bar_chart_rounded,   'label': 'Stats'},
-      {'icon': Icons.tune_rounded,        'label': 'Settings'},
-      {'icon': Icons.group_outlined,      'label': 'Team'},
+      {'icon': Icons.note_alt_outlined,    'label': 'Notes',    'tab': 0},
+      {'icon': Icons.bar_chart_rounded,    'label': 'Stats',    'tab': 5},
+      {'icon': Icons.tune_rounded,         'label': 'Settings', 'tab': 5},
+      {'icon': Icons.auto_awesome_rounded, 'label': 'AI',       'tab': 4},
     ];
     return Row(
       children: actions.map((a) {
@@ -476,7 +489,9 @@ Widget _buildWeeklyProgress() {
             child: _QuickActionButton(
               icon: a['icon'] as IconData,
               label: a['label'] as String,
-              onTap: () {},
+              onTap: () {
+                context.findAncestorStateOfType<AppShellState>()?.jumpToTab(a['tab'] as int);
+              },
             ),
           ),
         );
@@ -518,7 +533,9 @@ Widget _buildWeeklyProgress() {
   // ── FAB ──────────────────────────────────────
   Widget _buildFAB() {
     return FloatingActionButton(
-      onPressed: () {},
+      onPressed: () {
+        context.findAncestorStateOfType<AppShellState>()?.jumpToTab(2);
+      },
       backgroundColor: FocusFlowTheme.accent,
       foregroundColor: Colors.white,
       elevation: 4,

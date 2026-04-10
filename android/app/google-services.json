@@ -1,0 +1,68 @@
+{
+  "project_info": {
+    "project_number": "579001057268",
+    "firebase_url": "https://focusflow-955c6-default-rtdb.firebaseio.com",
+    "project_id": "focusflow-955c6",
+    "storage_bucket": "focusflow-955c6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:579001057268:android:d5ba683d77722ef96883a1",
+        "android_client_info": {
+          "package_name": "FocusFlow.com"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDUrnPhXQIKcb76tUC2fLObgLfP11PlAYk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:579001057268:android:ec6254d64ee20c4f6883a1",
+        "android_client_info": {
+          "package_name": "com.example.FocusFlow"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDUrnPhXQIKcb76tUC2fLObgLfP11PlAYk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:579001057268:android:219c4e191b06e18d6883a1",
+        "android_client_info": {
+          "package_name": "com.example.my_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDUrnPhXQIKcb76tUC2fLObgLfP11PlAYk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

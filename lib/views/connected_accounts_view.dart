@@ -36,15 +36,42 @@ class _ConnectedAccountsViewState extends State<ConnectedAccountsView> {
     super.dispose();
   }
 
-  Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    _lcCtrl.text    = prefs.getString('lc_username') ?? '';
-    _cfCtrl.text    = prefs.getString('cf_handle')   ?? '';
-    _ccCtrl.text    = prefs.getString('cc_username') ?? '';
-    _ghCtrl.text    = prefs.getString('gh_username') ?? '';
-    // never prefill PAT for security
-    setState(() => _loading = false);
+Future<void> _load() async {
+  final prefs = await SharedPreferences.getInstance();
+  
+  // 1. Try to load from Local Storage first (fast)
+  String? lc = prefs.getString('lc_username');
+  String? cf = prefs.getString('cf_handle');
+  String? cc = prefs.getString('cc_username');
+  String? gh = prefs.getString('gh_username');
+
+  // 2. If local is empty and user is logged in, fetch from Firebase
+  if (_uid != null && (lc == null || cf == null)) {
+    final snapshot = await _db.child('users/$_uid/connectedAccounts').get();
+    if (snapshot.exists) {
+      final data = Map<String, dynamic>.from(snapshot.value as Map);
+      lc = data['leetcode'] ?? '';
+      cf = data['codeforces'] ?? '';
+      cc = data['codechef'] ?? '';
+      gh = data['github'] ?? '';
+      
+      // 3. Save back to SharedPreferences so it's faster next time
+      await prefs.setString('lc_username', lc!);
+      await prefs.setString('cf_handle',   cf!);
+      await prefs.setString('cc_username', cc!);
+      await prefs.setString('gh_username', gh!);
+    }
   }
+
+  // 4. Update the controllers to show the names in the UI
+  setState(() {
+    _lcCtrl.text = lc ?? '';
+    _cfCtrl.text = cf ?? '';
+    _ccCtrl.text = cc ?? '';
+    _ghCtrl.text = gh ?? '';
+    _loading = false;
+  });
+}
 
   Future<void> _save() async {
     setState(() => _saving = true);

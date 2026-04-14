@@ -2,15 +2,54 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class StatsFetchService {
-  // LeetCode Stats
+  // LeetCode Stats — uses the official GraphQL API directly
   static Future<Map<String, dynamic>?> fetchLeetCode(String username) async {
-    final url = Uri.parse('https://leetcode-stats-api.herokuapp.com/$username');
+    const endpoint = 'https://leetcode.com/graphql';
+    const query = '''
+      query getUserProfile(\$username: String!) {
+        matchedUser(username: \$username) {
+          submitStats {
+            acSubmissionNum {
+              difficulty
+              count
+            }
+          }
+        }
+      }
+    ''';
     try {
-      // Added a 5-second timeout
-      final response = await http.get(url).timeout(const Duration(seconds: 5));
+      final response = await http.post(
+        Uri.parse(endpoint),
+        headers: {
+          'Content-Type': 'application/json',
+          'Referer': 'https://leetcode.com',
+        },
+        body: jsonEncode({'query': query, 'variables': {'username': username}}),
+      ).timeout(const Duration(seconds: 10));
+
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['status'] == 'success') return data;
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        final acList = body['data']?['matchedUser']?['submitStats']
+                ?['acSubmissionNum'] as List? ?? [];
+
+        int totalSolved = 0, easySolved = 0, mediumSolved = 0, hardSolved = 0;
+        for (final item in acList) {
+          final d = item['difficulty'] as String? ?? '';
+          final c = item['count'] as int? ?? 0;
+          if (d == 'All')    totalSolved  = c;
+          if (d == 'Easy')   easySolved   = c;
+          if (d == 'Medium') mediumSolved = c;
+          if (d == 'Hard')   hardSolved   = c;
+        }
+
+        // Return map with keys matching what progress_view.dart expects
+        return {
+          'status': 'success',
+          'totalSolved': totalSolved,
+          'easySolved': easySolved,
+          'mediumSolved': mediumSolved,
+          'hardSolved': hardSolved,
+        };
       }
     } catch (e) {
       print('LeetCode Error: $e');

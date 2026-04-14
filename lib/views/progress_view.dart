@@ -1,7 +1,92 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:FocusFlow/views/app_shell.dart';
 import 'package:FocusFlow/services/platform/stats_fetch_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+// ─── Custom Pie Chart Painter ───────────────────────────────────────────────
+
+class _PieSegment {
+  final double value;
+  final Color color;
+  final String label;
+  const _PieSegment({required this.value, required this.color, required this.label});
+}
+
+class _PiePainter extends CustomPainter {
+  final List<_PieSegment> segments;
+  final double progress; // 0.0 → 1.0 animation
+  final double holeRatio;
+
+  _PiePainter({required this.segments, required this.progress, this.holeRatio = 0.58});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = min(size.width, size.height) / 2;
+    final holeRadius = radius * holeRatio;
+
+    final total = segments.fold<double>(0, (s, e) => s + e.value);
+    if (total == 0) return;
+
+    double startAngle = -pi / 2;
+    const gap = 0.025;
+
+    for (final seg in segments) {
+      final sweep = (seg.value / total) * 2 * pi * progress - gap;
+      if (sweep <= 0) {
+        startAngle += (seg.value / total) * 2 * pi * progress;
+        continue;
+      }
+
+      final paint = Paint()
+        ..color = seg.color
+        ..style = PaintingStyle.fill;
+
+      final path = Path();
+      path.moveTo(
+        center.dx + (holeRadius + 1) * cos(startAngle + gap / 2),
+        center.dy + (holeRadius + 1) * sin(startAngle + gap / 2),
+      );
+      path.arcTo(
+        Rect.fromCircle(center: center, radius: radius),
+        startAngle + gap / 2,
+        sweep,
+        false,
+      );
+      path.arcTo(
+        Rect.fromCircle(center: center, radius: holeRadius),
+        startAngle + gap / 2 + sweep,
+        -sweep,
+        false,
+      );
+      path.close();
+      canvas.drawPath(path, paint);
+
+      // Subtle glow ring
+      final glowPaint = Paint()
+        ..color = seg.color.withOpacity(0.18)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 6;
+      final glowPath = Path();
+      glowPath.addArc(
+        Rect.fromCircle(center: center, radius: radius - 3),
+        startAngle + gap / 2,
+        sweep,
+      );
+      canvas.drawPath(glowPath, glowPaint);
+
+      startAngle += (seg.value / total) * 2 * pi * progress;
+    }
+  }
+
+  @override
+  bool shouldRepaint(_PiePainter oldDelegate) =>
+      oldDelegate.progress != progress;
+}
+
+// ─── Progress View ───────────────────────────────────────────────────────────
 
 class ProgressView extends StatefulWidget {
   const ProgressView({super.key});
@@ -9,14 +94,57 @@ class ProgressView extends StatefulWidget {
   State<ProgressView> createState() => _ProgressViewState();
 }
 
-class _ProgressViewState extends State<ProgressView> {
+class _ProgressViewState extends State<ProgressView>
+    with TickerProviderStateMixin {
   Map<String, dynamic>? lcData;
   Map<String, dynamic>? cfData;
   bool loading = true;
 
+  late AnimationController _pieCtrl;
+  late AnimationController _staggerCtrl;
+  late Animation<double> _pieAnim;
+  late List<Animation<double>> _fadeAnims;
+  late List<Animation<Offset>> _slideAnims;
+
+  static const int _itemCount = 5;
+
   @override
   void initState() {
     super.initState();
+
+    _pieCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    );
+    _pieAnim = CurvedAnimation(parent: _pieCtrl, curve: Curves.easeOutQuart);
+
+    _staggerCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+
+    _fadeAnims = List.generate(_itemCount, (i) {
+      final start = i * 0.12;
+      final end = (start + 0.45).clamp(0.0, 1.0);
+      return Tween<double>(begin: 0, end: 1).animate(
+        CurvedAnimation(
+          parent: _staggerCtrl,
+          curve: Interval(start.clamp(0.0, 1.0), end, curve: Curves.easeOut),
+        ),
+      );
+    });
+
+    _slideAnims = List.generate(_itemCount, (i) {
+      final start = i * 0.12;
+      final end = (start + 0.45).clamp(0.0, 1.0);
+      return Tween<Offset>(begin: const Offset(0, 0.25), end: Offset.zero).animate(
+        CurvedAnimation(
+          parent: _staggerCtrl,
+          curve: Interval(start.clamp(0.0, 1.0), end, curve: Curves.easeOutCubic),
+        ),
+      );
+    });
+
     _loadAllStats();
   }
 
@@ -32,78 +160,327 @@ class _ProgressViewState extends State<ProgressView> {
       cfData = await StatsFetchService.fetchCodeforces(cfUser);
     }
 
-    setState(() => loading = false);
+    if (mounted) {
+      setState(() => loading = false);
+      _pieCtrl.forward();
+      _staggerCtrl.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _pieCtrl.dispose();
+    _staggerCtrl.dispose();
+    super.dispose();
+  }
+
+  Widget _animated(int index, Widget child) {
+    return FadeTransition(
+      opacity: _fadeAnims[index],
+      child: SlideTransition(position: _slideAnims[index], child: child),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: FF.bg,
-      appBar: AppBar(title: Text('My Growth', style: TextStyle(color: FF.textPri, fontWeight: FontWeight.w800))),
-      body: loading 
-        ? Center(child: CircularProgressIndicator(color: FF.accent))
-        : ListView(
-            padding: const EdgeInsets.all(20),
+      appBar: AppBar(
+        backgroundColor: FF.bg,
+        elevation: 0,
+        title: Text(
+          'My Growth',
+          style: TextStyle(
+            color: FF.textPri,
+            fontWeight: FontWeight.w900,
+            fontFamily: 'medifont',
+            fontSize: 22,
+            letterSpacing: 0.4,
+          ),
+        ),
+      ),
+      body: loading
+          ? Center(child: CircularProgressIndicator(color: FF.accent, strokeWidth: 2))
+          : (lcData == null && cfData == null)
+              ? _buildEmpty()
+              : _buildContent(),
+    );
+  }
+
+  Widget _buildEmpty() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.bar_chart_rounded, color: FF.textSec, size: 48),
+          const SizedBox(height: 14),
+          Text('No accounts connected',
+              style: TextStyle(color: FF.textSec, fontSize: 15)),
+          const SizedBox(height: 6),
+          Text('Link LeetCode or Codeforces\nfrom your profile settings',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: FF.textSec.withOpacity(0.6), fontSize: 13)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContent() {
+    final easy   = lcData?['easySolved']   as int? ?? 0;
+    final medium = lcData?['mediumSolved'] as int? ?? 0;
+    final hard   = lcData?['hardSolved']   as int? ?? 0;
+    final total  = lcData?['totalSolved']  as int? ?? 0;
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 40),
+      children: [
+        if (lcData != null) ...[
+          _animated(0, _buildLcHeader(total)),
+          const SizedBox(height: 20),
+          _animated(1, _buildPieSection(easy, medium, hard, total)),
+          const SizedBox(height: 16),
+          _animated(2, _buildDiffRow(easy, medium, hard)),
+        ],
+        if (cfData != null) ...[
+          const SizedBox(height: 20),
+          _animated(lcData != null ? 3 : 0, _buildCfCard()),
+        ],
+      ],
+    );
+  }
+
+  // ── LeetCode header banner ─────────────────────────────────────────────
+  Widget _buildLcHeader(int total) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      decoration: BoxDecoration(
+        color: FF.card,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: FF.divider),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44, height: 44,
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFA116).withOpacity(0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.code_rounded, color: Color(0xFFFFA116), size: 22),
+          ),
+          const SizedBox(width: 14),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (lcData != null) _buildLeetCodeCard(),
-              const SizedBox(height: 16),
-              if (cfData != null) _buildCodeforcesCard(),
-              // Add GitHub cards here later
+              Text('LEETCODE', style: TextStyle(
+                color: FF.textSec, fontSize: 11,
+                letterSpacing: 1.2, fontWeight: FontWeight.w600,
+              )),
+              const SizedBox(height: 3),
+              Text('$total problems solved', style: TextStyle(
+                color: FF.textPri, fontSize: 18,
+                fontWeight: FontWeight.w800, fontFamily: 'medifont',
+              )),
             ],
           ),
-    );
-  }
-
-  Widget _buildLeetCodeCard() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: FF.card, borderRadius: BorderRadius.circular(16), border: Border.all(color: FF.divider)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(Icons.code, color: Colors.orange),
-            SizedBox(width: 8),
-            Text('LeetCode Progress', style: TextStyle(fontWeight: FontWeight.bold, color: FF.textPri)),
-          ]),
-          const Divider(height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _statItem('Solved', '${lcData!['totalSolved']}'),
-              _statItem('Easy', '${lcData!['easySolved']}', color: Colors.green),
-              _statItem('Hard', '${lcData!['hardSolved']}', color: Colors.red),
-            ],
-          )
         ],
       ),
     );
   }
 
-  Widget _statItem(String label, String value, {Color? color}) {
-    return Column(children: [
-      Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color ?? FF.textPri)),
-      Text(label, style: TextStyle(fontSize: 12, color: FF.textSec)),
-    ]);
-  }
+  // ── Pie chart section ────────────────────────────────────────────────────
+  Widget _buildPieSection(int easy, int medium, int hard, int total) {
+    final hasData = easy + medium + hard > 0;
+    final segments = hasData
+        ? [
+            _PieSegment(value: easy.toDouble(),   color: const Color(0xFF3DDC84), label: 'Easy'),
+            _PieSegment(value: medium.toDouble(), color: const Color(0xFFFFB547), label: 'Medium'),
+            _PieSegment(value: hard.toDouble(),   color: const Color(0xFFFF5C5C), label: 'Hard'),
+          ]
+        : [_PieSegment(value: 1, color: FF.divider, label: '')];
 
-  Widget _buildCodeforcesCard() {
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: FF.card, borderRadius: BorderRadius.circular(16), border: Border.all(color: FF.divider)),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: FF.card,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: FF.divider),
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Icon(Icons.trending_up, color: Colors.blue),
-            SizedBox(width: 8),
-            Text('Codeforces Rating', style: TextStyle(fontWeight: FontWeight.bold, color: FF.textPri)),
-          ]),
-          const SizedBox(height: 12),
-          Text('${cfData!['rating'] ?? 'Unrated'}', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.blue)),
-          Text('Rank: ${cfData!['rank'] ?? 'N/A'}', style: TextStyle(color: FF.textSec)),
+          Text('DIFFICULTY BREAKDOWN', style: TextStyle(
+            color: FF.textSec, fontSize: 11,
+            letterSpacing: 1.2, fontWeight: FontWeight.w600,
+          )),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: 200, height: 200,
+            child: AnimatedBuilder(
+              animation: _pieAnim,
+              builder: (_, __) => Stack(
+                alignment: Alignment.center,
+                children: [
+                  CustomPaint(
+                    size: const Size(200, 200),
+                    painter: _PiePainter(segments: segments, progress: _pieAnim.value),
+                  ),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${(total * _pieAnim.value).round()}',
+                        style: TextStyle(
+                          color: FF.textPri, fontSize: 34,
+                          fontWeight: FontWeight.w900, fontFamily: 'medifont',
+                        ),
+                      ),
+                      Text('solved', style: TextStyle(color: FF.textSec, fontSize: 12)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (hasData) ...[
+            const SizedBox(height: 22),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _legend(const Color(0xFF3DDC84), 'Easy'),
+                const SizedBox(width: 22),
+                _legend(const Color(0xFFFFB547), 'Medium'),
+                const SizedBox(width: 22),
+                _legend(const Color(0xFFFF5C5C), 'Hard'),
+              ],
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  Widget _legend(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 9, height: 9,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 6),
+        Text(label, style: TextStyle(color: FF.textSec, fontSize: 12, fontWeight: FontWeight.w500)),
+      ],
+    );
+  }
+
+  // ── Difficulty stat cards ────────────────────────────────────────────────
+  Widget _buildDiffRow(int easy, int medium, int hard) {
+    return Row(
+      children: [
+        Expanded(child: _diffCard('Easy',   easy,   const Color(0xFF3DDC84))),
+        const SizedBox(width: 10),
+        Expanded(child: _diffCard('Medium', medium, const Color(0xFFFFB547))),
+        const SizedBox(width: 10),
+        Expanded(child: _diffCard('Hard',   hard,   const Color(0xFFFF5C5C))),
+      ],
+    );
+  }
+
+  Widget _diffCard(String label, int count, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.22)),
+      ),
+      child: Column(
+        children: [
+          Text('$count', style: TextStyle(
+            color: color, fontSize: 24,
+            fontWeight: FontWeight.w900, fontFamily: 'medifont',
+          )),
+          const SizedBox(height: 4),
+          Text(label, style: TextStyle(
+            color: color.withOpacity(0.75), fontSize: 11,
+            fontWeight: FontWeight.w600, letterSpacing: 0.5,
+          )),
+        ],
+      ),
+    );
+  }
+
+  // ── Codeforces card ──────────────────────────────────────────────────────
+  Widget _buildCfCard() {
+    final rating = cfData?['rating'] as int?;
+    final rank   = cfData?['rank']   as String? ?? 'unrated';
+    final rankColor = _cfRankColor(rank);
+    final displayRank = rank.isNotEmpty
+        ? rank[0].toUpperCase() + rank.substring(1)
+        : 'Unrated';
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: FF.card,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: FF.divider),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44, height: 44,
+            decoration: BoxDecoration(
+              color: FF.accent.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(Icons.trending_up_rounded, color: FF.accent, size: 22),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('CODEFORCES', style: TextStyle(
+                  color: FF.textSec, fontSize: 11,
+                  letterSpacing: 1.2, fontWeight: FontWeight.w600,
+                )),
+                const SizedBox(height: 3),
+                Text(
+                  rating != null ? 'Rating  $rating' : 'Unrated',
+                  style: TextStyle(
+                    color: FF.textPri, fontSize: 18,
+                    fontWeight: FontWeight.w800, fontFamily: 'medifont',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: rankColor.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: rankColor.withOpacity(0.28)),
+            ),
+            child: Text(displayRank, style: TextStyle(
+              color: rankColor, fontSize: 12,
+              fontWeight: FontWeight.w700, letterSpacing: 0.3,
+            )),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _cfRankColor(String rank) {
+    final r = rank.toLowerCase();
+    if (r.contains('legendary') || r.contains('grandmaster')) return const Color(0xFFFF5C5C);
+    if (r.contains('international') && r.contains('master'))  return const Color(0xFFFF8C00);
+    if (r.contains('master'))     return const Color(0xFFFF8C00);
+    if (r.contains('candidate'))  return const Color(0xFFB06EF5);
+    if (r.contains('expert'))     return const Color(0xFF4F8EF7);
+    if (r.contains('specialist')) return const Color(0xFF3DDC84);
+    return FF.textSec;
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:FocusFlow/services/auth/auth_service.dart';
 import 'package:FocusFlow/views/app_shell.dart';
@@ -12,6 +13,7 @@ class ConnectedAccountsView extends StatefulWidget {
 
 class _ConnectedAccountsViewState extends State<ConnectedAccountsView> {
   final _db  = FirebaseDatabase.instance.ref();
+  final _storage = const FlutterSecureStorage();
   String? get _uid => AuthService.firebase().currentUser?.id;
 
   final _lcCtrl    = TextEditingController();
@@ -44,6 +46,7 @@ Future<void> _load() async {
   String? cf = prefs.getString('cf_handle');
   String? cc = prefs.getString('cc_username');
   String? gh = prefs.getString('gh_username');
+  String? ghPat = await _storage.read(key: 'gh_pat');
 
   // 2. If local is empty and user is logged in, fetch from Firebase
   if (_uid != null && (lc == null || cf == null)) {
@@ -69,6 +72,7 @@ Future<void> _load() async {
     _cfCtrl.text = cf ?? '';
     _ccCtrl.text = cc ?? '';
     _ghCtrl.text = gh ?? '';
+    _ghPatCtrl.text = ghPat ?? '';
     _loading = false;
   });
 }
@@ -76,46 +80,78 @@ Future<void> _load() async {
   Future<void> _save() async {
     setState(() => _saving = true);
 
-    final prefs = await SharedPreferences.getInstance();
-    // Sensitive data → SharedPreferences (on-device only)
-    await prefs.setString('lc_username', _lcCtrl.text.trim());
-    await prefs.setString('cf_handle',   _cfCtrl.text.trim());
-    await prefs.setString('cc_username', _ccCtrl.text.trim());
-    await prefs.setString('gh_username', _ghCtrl.text.trim());
-    if (_ghPatCtrl.text.isNotEmpty) {
-      await prefs.setString('gh_pat', _ghPatCtrl.text.trim());
-    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // Sensitive data → local secure storage on-device
+      await prefs.setString('lc_username', _lcCtrl.text.trim());
+      await prefs.setString('cf_handle',   _cfCtrl.text.trim());
+      await prefs.setString('cc_username', _ccCtrl.text.trim());
+      await prefs.setString('gh_username', _ghCtrl.text.trim());
+      if (_ghPatCtrl.text.isNotEmpty) {
+        await _storage.write(key: 'gh_pat', value: _ghPatCtrl.text.trim());
+      }
 
-    // Non-sensitive usernames → Firebase (for community/leaderboard display)
-    final uid = _uid;
-    if (uid != null) {
-      await _db.child('users/$uid/connectedAccounts').update({
-        'leetcode':  _lcCtrl.text.trim(),
-        'codeforces': _cfCtrl.text.trim(),
-        'codechef':  _ccCtrl.text.trim(),
-        'github':    _ghCtrl.text.trim(),
-      });
-      // Also mirror to leaderboard
-      await _db.child('leaderboard/$uid/username').set(
-        AuthService.firebase().currentUser?.email?.split('@').first ?? 'user',
-      );
-    }
+      var remoteSyncFailed = false;
+      final uid = _uid;
+      if (uid != null) {
+        try {
+          await _db.child('users/$uid/connectedAccounts').update({
+            'leetcode':  _lcCtrl.text.trim(),
+            'codeforces': _cfCtrl.text.trim(),
+            'codechef':  _ccCtrl.text.trim(),
+            'githubUsername':    _ghCtrl.text.trim(),
+          });
+          // CHANGE THIS:
+await _db.child('leaderboard/$uid').update({
+  'username': AuthService.firebase().currentUser?.email?.split('@').first ?? 'user',
+  'xp': 0,      // Required by your validation rules
+  'streak': 0,  // Required by your validation rules
+});
+        } catch (error) {
+          remoteSyncFailed = true;
+          debugPrint('Connected accounts remote save failed: $error');
+        }
+      }
 
-    setState(() => _saving = false);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: const Row(children: [
-          Icon(Icons.check_circle_outline, color: Colors.white),
-          SizedBox(width: 8),
-          Text('Accounts saved!'),
-        ]),
-        backgroundColor: FF.success,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        margin: const EdgeInsets.all(12),
-        duration: const Duration(seconds: 2),
-      ));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Row(children: [
+            Icon(
+              remoteSyncFailed ? Icons.info_outline : Icons.check_circle_outline,
+              color: Colors.white,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(remoteSyncFailed
+                  ? 'Saved locally. Remote sync failed.'
+                  : 'Accounts saved!'),
+            ),
+          ]),
+          backgroundColor: remoteSyncFailed ? Colors.orange.shade700 : FF.success,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          margin: const EdgeInsets.all(12),
+          duration: const Duration(seconds: 3),
+        ));
+      }
+    } catch (error) {
+      debugPrint('Connected accounts save failed: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Row(children: [
+            const Icon(Icons.error_outline, color: Colors.white),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('Unable to save accounts. Please try again.')),
+          ]),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          margin: const EdgeInsets.all(12),
+          duration: const Duration(seconds: 3),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 

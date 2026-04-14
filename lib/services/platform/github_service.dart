@@ -7,6 +7,7 @@ class GitHubStats {
   final int publicRepos;
   final int followers;
   final int totalContributions;
+  final int streak;
   final Map<DateTime, int> heatmap;
 
   GitHubStats({
@@ -15,6 +16,7 @@ class GitHubStats {
     required this.publicRepos,
     required this.followers,
     required this.totalContributions,
+    required this.streak,
     required this.heatmap,
   });
 }
@@ -99,8 +101,39 @@ class GitHubService {
       publicRepos: userInfo['public_repos'] as int? ?? 0,
       followers: userInfo['followers'] as int? ?? 0,
       totalContributions: totalContributions,
+      streak: _calculateStreak(heatmap),
       heatmap: heatmap,
     );
+  }
+
+  static int _calculateStreak(Map<DateTime, int> heatmap) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    int streak = 0;
+    DateTime current = today;
+
+    // Check if today has contributions
+    if ((heatmap[current] ?? 0) > 0) {
+      streak++;
+      current = current.subtract(const Duration(days: 1));
+    } else {
+      // If not today, check yesterday
+      current = current.subtract(const Duration(days: 1));
+      if ((heatmap[current] ?? 0) > 0) {
+        streak++;
+        current = current.subtract(const Duration(days: 1));
+      } else {
+        return 0; // No recent contributions
+      }
+    }
+
+    // Continue counting backwards
+    while ((heatmap[current] ?? 0) > 0) {
+      streak++;
+      current = current.subtract(const Duration(days: 1));
+    }
+
+    return streak;
   }
 
   // ── Check if user committed today (no PAT needed) ───────────────────────

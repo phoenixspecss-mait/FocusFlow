@@ -5,6 +5,7 @@ import 'package:FocusFlow/services/platform/stats_fetch_service.dart';
 import 'package:FocusFlow/services/platform/leetcode_service.dart';
 import 'package:FocusFlow/services/platform/github_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 // ─── Custom Pie Chart Painter ────────────────────────────────────────────────
 
@@ -176,6 +177,8 @@ class _ProgressViewState extends State<ProgressView>
   GitHubStats? ghStats;
   bool loading = true;
 
+  final _storage = const FlutterSecureStorage();
+
   late AnimationController _pieCtrl;
   late AnimationController _staggerCtrl;
   late AnimationController _heatmapCtrl;
@@ -239,7 +242,7 @@ class _ProgressViewState extends State<ProgressView>
     final lcUser = prefs.getString('lc_username');
     final cfUser = prefs.getString('cf_handle');
     final ghUser = prefs.getString('gh_username');
-    final ghPat  = prefs.getString('gh_pat') ?? '';
+    final ghPat  = await _storage.read(key: 'gh_pat') ?? '';
 
     // Fetch in parallel
     final futures = await Future.wait([
@@ -384,6 +387,8 @@ class _ProgressViewState extends State<ProgressView>
           const SizedBox(height: 20),
           _animated(idx++, _buildGhHeader()),
           const SizedBox(height: 14),
+          _animated(idx++, _buildGhStreakRow()),
+          const SizedBox(height: 14),
           _animated(idx++, _buildHeatmapCard(
             title: 'CONTRIBUTION ACTIVITY',
             subtitle: 'Last 6 months',
@@ -470,6 +475,28 @@ class _ProgressViewState extends State<ProgressView>
           iconColor: const Color(0xFF4F8EF7),
           label: 'Active Days',
           value: '$activeDays days',
+        )),
+      ],
+    );
+  }
+
+  // ── GitHub streak row ─────────────────────────────────────────────────
+  Widget _buildGhStreakRow() {
+    final streak = ghStats?.streak ?? 0;
+    return Row(
+      children: [
+        Expanded(child: _chipCard(
+          icon: Icons.local_fire_department_rounded,
+          iconColor: const Color(0xFFFF6B35),
+          label: 'Current Streak',
+          value: '$streak days',
+        )),
+        const SizedBox(width: 10),
+        Expanded(child: _chipCard(
+          icon: Icons.commit_rounded,
+          iconColor: const Color(0xFF3DDC84),
+          label: 'Total Contributions',
+          value: _formatNumber(ghStats!.totalContributions),
         )),
       ],
     );

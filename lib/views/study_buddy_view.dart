@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:FocusFlow/views/app_shell.dart';
 
 // ─── Paste the same Gemini API key used in ai_agent_view.dart ────────────────
-const String _geminiApiKey = 'Enter API KEY';
+const String _geminiApiKey = 'AIzaSyBYilhq3TCptiTX996snAGQaGuv5I358sU';
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -16,7 +16,7 @@ Future<String> _callGemini(String prompt,
     {int maxTokens = 1500, double temp = 0.7, bool expectJson = false}) async {
   final url = Uri.parse(
     'https://generativelanguage.googleapis.com/v1beta/models/'
-    'gemini-2.5-flash:generateContent?key=$_geminiApiKey',
+    'gemini-2.5-flash:generateContent?key=AIzaSyBYilhq3TCptiTX996snAGQaGuv5I358sU',
   );
 
   final body = jsonEncode({

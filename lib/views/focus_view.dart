@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:FocusFlow/services/timer_settings_service.dart';
 import 'package:FocusFlow/services/platform/stats_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -49,12 +50,24 @@ class _FocusViewState extends State<FocusView>
   int  _sessionsDone  = 0;
   Timer? _timer;
 
-  final List<_Mode> _modes = [
-    _Mode(LocalizationService.t('pomodoro'),    25, FF.accent),
-    _Mode(LocalizationService.t('short_break'),  5, FF.success),
-    _Mode(LocalizationService.t('long_break'),  15, FF.purple),
-  ];
+  List<_Mode> _modes = [];
   int _modeIndex = 0;
+
+  void _refreshsettings(){
+    final settings = TimerSettingsService.instance.settings;
+    setState(() {
+      _modes = [
+        _Mode(LocalizationService.t('pomorodo'), settings.focusMinutes, FF.accent),
+        _Mode(LocalizationService.t('short_break'), settings.shortBreakMinutes, FF.success),
+        _Mode(LocalizationService.t('long_break'), settings.longBreakMinutes, FF.purple),
+      ];
+        _totalSeconds = _modes[_modeIndex].minutes *60;
+    if (!_running) {
+      _remainSeconds = _totalSeconds;
+    }
+
+    });
+  }
 
   late AnimationController _pulseController;
 
@@ -63,7 +76,6 @@ class _FocusViewState extends State<FocusView>
 
   int _savedFocusMinutes  = 0;
   int _savedTotalSessions = 0;
-
   @override
   void initState() {
     super.initState();
@@ -71,7 +83,20 @@ class _FocusViewState extends State<FocusView>
       vsync: this, duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
     _loadStats();
+
+    _initializeData();
   }
+  Future<void> _initializeData() async {
+  await _loadStats(); // Your existing stats load
+  
+  // CRITICAL: You must call load() on the service here 
+  // so it pulls from Firebase on app restart!
+  await TimerSettingsService.instance.load();
+  
+  if (mounted) {
+    _refreshsettings(); // Now sync the modes with the loaded data
+  }
+}
 
   Future<void> _loadStats() async {
     if (_uid == null) return;
@@ -185,6 +210,12 @@ class _FocusViewState extends State<FocusView>
 
   @override
   Widget build(BuildContext context) {
+    if (_modes.isEmpty) {
+    return Scaffold(
+      backgroundColor: FF.bg,
+      body: Center(child: CircularProgressIndicator(color: FF.accent)),
+    );
+  }
     return ListenableBuilder(
       listenable: SettingsService.instance,
       builder: (context, _) {
@@ -255,11 +286,15 @@ class _FocusViewState extends State<FocusView>
                   ),
                   onPressed: _running
                       ? null
-                      : () => Navigator.push(
+                      : () async{ 
+                        
+                        await Navigator.push(
                             context,
                             MaterialPageRoute(
                                 builder: (_) => const TimerSettingsView()),
-                          ),
+                          );
+                          _refreshsettings();
+                      },
                 ),
               ],
             ),

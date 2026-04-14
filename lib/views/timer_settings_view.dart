@@ -11,9 +11,9 @@ class TimerSettingsView extends StatefulWidget {
 class _TimerSettingsViewState extends State<TimerSettingsView> {
   final _svc = TimerSettingsService.instance;
 
-  late int _focus;
-  late int _short;
-  late int _long;
+  int _focus = 25;
+  int _short = 5;
+  int _long =15;
   bool _saving = false;
 
   @override

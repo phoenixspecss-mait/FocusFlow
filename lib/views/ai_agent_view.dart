@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:FocusFlow/views/app_shell.dart';
 
 // ─── GEMINI API KEY ────────────────────────────────────────────────────────────
-const String _geminiApiKey = 'Enter API KEY';
+const String _geminiApiKey = 'AIzaSyA_S6G9isQ7H5fb_d9NHNB0T6v9w1DeZQ4';
 const String _geminiModel  = 'gemini-2.5-flash';
 // ──────────────────────────────────────────────────────────────────────────────
 

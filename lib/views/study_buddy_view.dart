@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:FocusFlow/views/app_shell.dart';
 
 // ─── Paste the same Gemini API key used in ai_agent_view.dart ────────────────
-const String _geminiApiKey = 'AIzaSyBYilhq3TCptiTX996snAGQaGuv5I358sU';
+const String _geminiApiKey = 'haha';
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -200,7 +200,7 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
               _buildTaskList(),
               const SizedBox(height: 28),
               _buildSectionHeader(
-                'Coding Progress',
+                'See you Progress',
                 onSeeAll: () {
                   // Navigate to your progress view
                   Navigator.push(

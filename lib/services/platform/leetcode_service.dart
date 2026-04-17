@@ -73,32 +73,79 @@ class LeetCodeService {
       difficulty: q2['difficulty'] ?? '',
     );
   }
+  static Future<List<dynamic>> fetchRecentSubmissions(String username) async {
+    // GraphQL query to get recent AC (Accepted) submissions
+    final query = {
+      "query": """
+        query recentAcSubmissions(\$username: String!, \$limit: Int!) {
+          recentAcSubmissionList(username: \$username, limit: \$limit) {
+            title
+            titleSlug
+            timestamp
+            statusDisplay
+          }
+        }
+      """,
+      "variables": {"username": username, "limit": 20}
+    };
+
+    try {
+      final response = await http.post(
+        Uri.parse(_endpoint),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode(query),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        // This returns the list of submissions from the JSON response
+        return data['data']['recentAcSubmissionList'] ?? [];
+      } else {
+        return [];
+      }
+    } catch (e) {
+      print('LeetCode API Error: $e');
+      return [];
+    }
+  }
+  
 
   // ── Check if user solved a specific problem today ───────────────────────
-  static Future<bool> isSolvedToday(String username, String titleSlug) async {
-    const q = '''
-      query getRecentAC(\$username: String!) {
-        recentAcSubmissionList(username: \$username, limit: 20) {
-          titleSlug
-          timestamp
-        }
+static Future<bool> isSolvedToday(String username, String titleSlug) async {
+  const q = '''
+    query getRecentAC(\$username: String!) {
+      recentAcSubmissionList(username: \$username, limit: 20) {
+        titleSlug
+        timestamp
       }
-    ''';
-    final data = await _query(q, {'username': username});
-    if (data == null) return false;
-
-    final submissions = data['data']?['recentAcSubmissionList'] as List? ?? [];
-    final today = DateTime.now();
-    final todayStart = DateTime(today.year, today.month, today.day)
-        .millisecondsSinceEpoch ~/ 1000;
-
-    for (final s in submissions) {
-      final slug = s['titleSlug'] as String? ?? '';
-      final ts   = int.tryParse(s['timestamp'].toString()) ?? 0;
-      if (slug == titleSlug && ts >= todayStart) return true;
     }
-    return false;
+  ''';
+  final data = await _query(q, {'username': username});
+  if (data == null) return false;
+
+  final submissions = data['data']?['recentAcSubmissionList'] as List? ?? [];
+  
+  // 1. Normalize your target slug (Remove all non-alphanumeric chars)
+  final normalizedTarget = titleSlug.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+  // 2. Window logic: Using 24 hours (86400s) is safer for IST morning solves
+  final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+  final dayWindow = 86400; 
+
+  for (final s in submissions) {
+    final apiSlug = s['titleSlug'] as String? ?? '';
+    final ts = int.tryParse(s['timestamp'].toString()) ?? 0;
+
+    // 3. Normalize the API slug for comparison
+    final normalizedApiSlug = apiSlug.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+    // Check if the slugs match and if it happened within the rolling 24h window
+    if (normalizedApiSlug == normalizedTarget && (now - ts) <= dayWindow) {
+      return true;
+    }
   }
+  return false;
+}
 
   // ── Fetch full stats + heatmap ──────────────────────────────────────────
   static Future<LeetCodeStats?> fetchStats(String username) async {

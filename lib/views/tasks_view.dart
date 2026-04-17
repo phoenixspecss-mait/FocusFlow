@@ -39,7 +39,6 @@ class _TasksViewState extends State<TasksView> {
 
   void _listenToTasks() {
     if (_uid == null) return;
-    // Real-time stream from Firebase
     _db
         .tasksStream(ownerUserId: _uid!)
         .listen(
@@ -70,40 +69,42 @@ class _TasksViewState extends State<TasksView> {
   Future<void> _addTask(String title, String tag, String detail) async {
     if (_uid == null) return;
     if (tag == 'Trackable') {
-    // 1. ROUTE TO PLATFORM SERVICE (Realtime Database)
-    // Convert the string detail back to the TaskPlatform enum
-    TaskPlatform platform;
-    switch (detail) {
-      case 'leetcode':   platform = TaskPlatform.leetcode; break;
-      case 'codeforces': platform = TaskPlatform.codeforces; break;
-      case 'codechef':   platform = TaskPlatform.codechef; break;
-      case 'github':     platform = TaskPlatform.github; break;
-      default:           platform = TaskPlatform.manual;
-    }
+      TaskPlatform platform;
+      
+      switch (detail) {
+        case 'leetcode':   platform = TaskPlatform.leetcode;   break;
+        case 'codeforces': platform = TaskPlatform.codeforces; break;
+        case 'codechef':   platform = TaskPlatform.codechef;   break;
+        case 'github':     platform = TaskPlatform.github;     break;
+        default:           platform = TaskPlatform.manual;
+      }
+      bool isDaily = platform == TaskPlatform.leetcode && 
+                   (title.toLowerCase().contains('potd') || title.isEmpty);
 
-    // Call your new Verifier service
-    await TaskVerifier.createPlatformTask(
-      title: title,
-      platform: platform,
-      // Defaulting to POTD for LeetCode for simplicity, 
-      // or you can add more logic to your sheet to capture slugs
-      isPOTD: platform == TaskPlatform.leetcode, 
-    );
-  }
-  else{
-    // tag and priority stored in title for now (your schema has title + completed)
-    await _db.createTask(ownerUserId: _uid!, title: '[$tag][$detail] $title');
-  }
+    // Simple slug generator: lowercase and replace spaces with hyphens
+    String? problemSlug = isDaily ? null : title.toLowerCase().trim().replaceAll(' ', '-');
+      // Writes to tasks/$uid — the same node that tasksStream() reads,
+      // so the card appears immediately in the list.
+      await TaskVerifier.createPlatformTask(
+        title: title,
+        platform: platform,
+        isPOTD: isDaily,
+        problemSlug: problemSlug
+      );
+    } else {
+      await _db.createTask(ownerUserId: _uid!, title: '[$tag][$detail] $title');
+    }
   }
 
   Future<void> _toggleDone(DatabaseTask task) async {
     if (_uid == null) return;
+    // Trackable tasks are only marked done through TaskVerifier — not manually
+    if (task.isTrackable) return;
     await _db.updateTask(
       ownerUserId: _uid!,
       taskId: task.id,
       completed: !task.completed,
     );
-    // Update tasksDone count on user
     final doneCount =
         _tasks.where((t) => t.completed).length + (task.completed ? -1 : 1);
     await _db.updateUserStats(ownerUserId: _uid!, tasksDone: doneCount);
@@ -112,6 +113,69 @@ class _TasksViewState extends State<TasksView> {
   Future<void> _deleteTask(DatabaseTask task) async {
     if (_uid == null) return;
     await _db.deleteTask(ownerUserId: _uid!, taskId: task.id);
+  }
+
+  /// Called when user taps the sync button on a trackable task card.
+  Future<void> _verifyTask(DatabaseTask task) async {
+    if (_uid == null || !task.isTrackable) return;
+
+    TaskPlatform platform;
+    switch (task.platform) {
+      case 'leetcode':   platform = TaskPlatform.leetcode;   break;
+      case 'codeforces': platform = TaskPlatform.codeforces; break;
+      case 'codechef':   platform = TaskPlatform.codechef;   break;
+      case 'github':     platform = TaskPlatform.github;     break;
+      default:           platform = TaskPlatform.manual;
+    }
+
+    final pt = PlatformTask(
+      id: task.id,
+      title: task.title,
+      platform: platform,
+      verified: task.verified,
+      completed: task.completed,
+      createdAt: task.createdAt,
+      problemSlug: task.problemSlug,
+      contestId: task.contestId,
+      problemIndex: task.problemIndex,
+      isPOTD: task.isPOTD,
+    );
+
+    final success = await TaskVerifier.verify(pt);
+
+    if (mounted) {
+      if (success) {
+        final doneCount = _tasks.where((t) => t.completed).length + 1;
+        await _db.updateUserStats(ownerUserId: _uid!, tasksDone: doneCount);
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: success ? FF.success : FF.card,
+          content: Row(
+            children: [
+              Icon(
+                success ? Icons.check_circle_rounded : Icons.info_rounded,
+                color: success ? Colors.white : FF.textSec,
+                size: 18,
+              ),
+              const SizedBox(width: 10),
+              Text(
+                success
+                    ? 'Task verified ✓ — marked as done!'
+                    : 'Not solved yet on ${task.platform?.toUpperCase() ?? 'platform'}',
+                style: TextStyle(
+                  color: success ? Colors.white : FF.textSec,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   @override
@@ -157,7 +221,17 @@ class _TasksViewState extends State<TasksView> {
               _buildProgressHeader(active, done),
               const SizedBox(height: 16),
               _buildFilterRow(),
-              const SizedBox(height: 8),
+              const SizedBox(height: 20),
+              Align(
+  alignment: Alignment.centerLeft, // Positions the widget to the left
+  child: Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 20), // Keeps it aligned with your cards
+    child: Text(
+      "Swipe left to delete",
+      style: TextStyle(color: Colors.grey, fontSize: 12),
+    ),
+  ),
+),
               Expanded(
                 child: _loading
                     ? Center(child: CircularProgressIndicator(color: FF.accent))
@@ -281,9 +355,8 @@ class _TasksViewState extends State<TasksView> {
             Text(
               _filter == 'All'
                   ? LocalizationService.t('no_tasks')
-                  : LocalizationService.t(
-                      'no_filter_tasks',
-                    ).replaceAll('{filter}', _getFilterLabel(_filter)),
+                  : LocalizationService.t('no_filter_tasks')
+                      .replaceAll('{filter}', _getFilterLabel(_filter)),
               style: TextStyle(color: FF.textSec, fontSize: 15),
             ),
           ],
@@ -308,7 +381,11 @@ class _TasksViewState extends State<TasksView> {
             child: Icon(Icons.delete_outline, color: FF.danger),
           ),
           onDismissed: (_) => _deleteTask(task),
-          child: _TaskCard(task: task, onToggle: () => _toggleDone(task)),
+          child: _TaskCard(
+            task: task,
+            onToggle: () => _toggleDone(task),
+            onVerify: () => _verifyTask(task),
+          ),
         );
       },
     );
@@ -327,83 +404,99 @@ class _TasksViewState extends State<TasksView> {
   }
 }
 
-class _TaskCard extends StatelessWidget {
+// ── Task Card ────────────────────────────────────────────────────────────────
+
+class _TaskCard extends StatefulWidget {
   final DatabaseTask task;
   final VoidCallback onToggle;
-  const _TaskCard({required this.task, required this.onToggle});
+  final Future<void> Function() onVerify;
 
-  // Check if this task belongs to the 'Trackable' category
-  bool get _isTrackable => _tag == 'Trackable';
+  const _TaskCard({
+    required this.task,
+    required this.onToggle,
+    required this.onVerify,
+  });
+
+  @override
+  State<_TaskCard> createState() => _TaskCardState();
+}
+
+class _TaskCardState extends State<_TaskCard> {
+  bool _verifying = false;
+
+  DatabaseTask get task => widget.task;
 
   String get _displayTitle {
-    final t = task.title;
-    final reg = RegExp(r'^\[.*?\]\[.*?\]\s*');
-    return t.replaceAll(reg, '');
+    if (task.isTrackable) return task.title;
+    return task.title.replaceAll(RegExp(r'^\[.*?\]\[.*?\]\s*'), '');
   }
 
-  String get _tag {
+  String get _tag => task.isTrackable ? 'Trackable' : (() {
     final m = RegExp(r'^\[(.*?)\]').firstMatch(task.title);
     return m?.group(1) ?? 'Dev';
-  }
+  })();
 
-  // Extracts the platform/priority string: [Tag][Detail] -> Detail
   String get _detail {
+    if (task.isTrackable) return task.platform ?? '';
     final m = RegExp(r'^\[.*?\]\[(.*?)\]').firstMatch(task.title);
     return m?.group(1) ?? 'medium';
   }
 
   Color _tagColor(String tag) {
     switch (tag) {
-      case 'Design': return FF.purple;
-      case 'Meeting': return FF.warning;
-      case 'Trackable': return Colors.orange; // Distinct color for trackable
-      case 'Other': return FF.success;
-      default: return FF.accent;
+      case 'Design':    return FF.purple;
+      case 'Meeting':   return FF.warning;
+      case 'Trackable': return Colors.orange;
+      case 'Other':     return FF.success;
+      default:          return FF.accent;
     }
   }
 
-  // Returns a platform logo or a priority icon
-Widget _buildLeading() {
-    if (_isTrackable) {
-      IconData platformIcon;
-      switch (_detail.toLowerCase()) {
-        case 'leetcode': 
-          platformIcon = Icons.code_rounded; 
-          break;
-        case 'github': 
-          // Using alternative icon to avoid version compatibility issues
-          platformIcon = Icons.source_rounded; 
-          break;
-        case 'codeforces':
-        case 'codechef':
-          platformIcon = Icons.terminal_rounded;
-          break;
-        default: 
-          platformIcon = Icons.analytics_outlined;
+  Widget _buildLeading() {
+    if (task.isTrackable) {
+      if (task.completed || task.verified) {
+        return Container(
+          width: 24, height: 24,
+          decoration: BoxDecoration(
+            color: FF.success.withOpacity(0.15),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(Icons.check_rounded, size: 14, color: FF.success),
+        );
       }
-      
+      final icon = switch (task.platform?.toLowerCase()) {
+        'leetcode'   => Icons.code_rounded,
+        'github'     => Icons.source_rounded,
+        'codeforces' => Icons.terminal_rounded,
+        'codechef'   => Icons.terminal_rounded,
+        _            => Icons.analytics_outlined,
+      };
       return Container(
         width: 24, height: 24,
         decoration: BoxDecoration(
-          color: Colors.orange.withOpacity(0.1), 
-          shape: BoxShape.circle
+          color: Colors.orange.withOpacity(0.1),
+          shape: BoxShape.circle,
         ),
-        child: Icon(platformIcon, size: 14, color: Colors.orange),
+        child: Icon(icon, size: 14, color: Colors.orange),
       );
     }
 
-    // Standard Checkbox for manual tasks remains the same
     return GestureDetector(
-      onTap: onToggle,
+      onTap: widget.onToggle,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         width: 22, height: 22,
         decoration: BoxDecoration(
           color: task.completed ? FF.accent : Colors.transparent,
           shape: BoxShape.circle,
-          border: Border.all(color: task.completed ? FF.accent : FF.textSec, width: 2),
+          border: Border.all(
+            color: task.completed ? FF.accent : FF.textSec,
+            width: 2,
+          ),
         ),
-        child: task.completed ? const Icon(Icons.check, size: 13, color: Colors.white) : null,
+        child: task.completed
+            ? const Icon(Icons.check, size: 13, color: Colors.white)
+            : null,
       ),
     );
   }
@@ -414,8 +507,11 @@ Widget _buildLeading() {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: FF.card, borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: FF.divider),
+        color: FF.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: task.verified ? FF.success.withOpacity(0.4) : FF.divider,
+        ),
       ),
       child: Row(
         children: [
@@ -429,42 +525,62 @@ Widget _buildLeading() {
                   _displayTitle,
                   style: TextStyle(
                     color: task.completed ? FF.textSec : FF.textPri,
-                    fontSize: 14, fontWeight: FontWeight.w500,
-                    decoration: task.completed ? TextDecoration.lineThrough : null,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    decoration:
+                        task.completed ? TextDecoration.lineThrough : null,
                   ),
                 ),
                 const SizedBox(height: 4),
-                Row(
+                Wrap(
+                  spacing: 6,
                   children: [
-                    // The main Category Tag (Dev, Trackable, etc.)
                     _Badge(label: _tag, color: _tagColor(_tag)),
-                    const SizedBox(width: 6),
-                    // The Detail Tag (High, LeetCode, etc.)
-                    if (_isTrackable) 
+                    if (task.isTrackable)
                       _Badge(label: _detail.toUpperCase(), color: Colors.orange)
                     else
                       _Badge(label: _detail, color: FF.textSec),
+                    if (task.isTrackable && task.isPOTD)
+                      _Badge(label: 'POTD', color: FF.accent),
+                    if (task.isTrackable && task.verified)
+                      _Badge(label: 'VERIFIED', color: FF.success),
                   ],
                 ),
               ],
             ),
           ),
-          // If it's trackable and not done, show a Verify/Refresh button
-          if (_isTrackable && !task.completed)
-            IconButton(
-              onPressed: () {
-                // Here you would trigger the TaskVerifier.verify logic
-                // usually by mapping this DatabaseTask back to a PlatformTask
-              },
-              icon: Icon(Icons.published_with_changes_rounded, color: FF.accent, size: 20),
-            ),
+
+          // Sync button — only for pending trackable tasks
+          if (task.isTrackable && !task.completed)
+            _verifying
+                ? Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: SizedBox(
+                      width: 18, height: 18,
+                      child: CircularProgressIndicator(
+                        color: FF.accent, strokeWidth: 2,
+                      ),
+                    ),
+                  )
+                : IconButton(
+                    tooltip: 'Sync with ${task.platform}',
+                    onPressed: () async {
+                      setState(() => _verifying = true);
+                      await widget.onVerify();
+                      if (mounted) setState(() => _verifying = false);
+                    },
+                    icon: Icon(
+                      Icons.published_with_changes_rounded,
+                      color: FF.accent,
+                      size: 20,
+                    ),
+                  ),
         ],
       ),
     );
   }
 }
 
-// Simple internal helper for the tags
 class _Badge extends StatelessWidget {
   final String label;
   final Color color;
@@ -480,11 +596,17 @@ class _Badge extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+        ),
       ),
     );
   }
 }
+
+// ── Add Task Sheet ───────────────────────────────────────────────────────────
 
 class _AddTaskSheet extends StatefulWidget {
   final Future<void> Function(String, String, String) onAdd;
@@ -493,22 +615,36 @@ class _AddTaskSheet extends StatefulWidget {
   State<_AddTaskSheet> createState() => _AddTaskSheetState();
 }
 
-class _AddTaskSheetState extends State<_AddTaskSheet> {
+class _AddTaskSheetState extends State<_AddTaskSheet>
+    with SingleTickerProviderStateMixin {
   final _ctrl = TextEditingController();
   String _tag = 'Dev';
   _P _priority = _P.medium;
-  _Platform _platform = _Platform.none;
+  _Platform _platform = _Platform.leetcode;
   bool _saving = false;
-  final _tags = ['Dev', 'Design', 'Meeting', 'Trackable', 'Other'];
+  final _manualTags = ['Dev', 'Design', 'Meeting', 'Other'];
+
+  late final TabController _tabCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabCtrl = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _tabCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
-        left: 20,
-        right: 20,
-        top: 20,
+        left: 20, right: 20, top: 20,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -517,12 +653,11 @@ class _AddTaskSheetState extends State<_AddTaskSheet> {
           Text(
             LocalizationService.t('new_task'),
             style: TextStyle(
-              color: FF.textPri,
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
+              color: FF.textPri, fontSize: 18, fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 16),
+
           TextField(
             controller: _ctrl,
             autofocus: true,
@@ -530,8 +665,7 @@ class _AddTaskSheetState extends State<_AddTaskSheet> {
             decoration: InputDecoration(
               hintText: LocalizationService.t('task_hint'),
               hintStyle: TextStyle(color: FF.textSec),
-              filled: true,
-              fillColor: FF.card,
+              filled: true, fillColor: FF.card,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide(color: FF.divider),
@@ -547,82 +681,69 @@ class _AddTaskSheetState extends State<_AddTaskSheet> {
             ),
           ),
           const SizedBox(height: 14),
-          Row(
-            children: _tags.map((t) {
-              final sel = t == _tag;
-              return GestureDetector(
-                onTap: () => setState(() => _tag = t),
-                child: Container(
-                  margin: const EdgeInsets.only(right: 8),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: sel ? FF.accent.withOpacity(0.2) : FF.card,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: sel ? FF.accent : FF.divider),
-                  ),
-                  child: Text(
-                    t,
-                    style: TextStyle(
-                      color: sel ? FF.accent : FF.textSec,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
+
+          // Manual / Trackable tab switcher
+          Container(
+            height: 38,
+            decoration: BoxDecoration(
+              color: FF.card,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: FF.divider),
+            ),
+            child: TabBar(
+              controller: _tabCtrl,
+              onTap: (i) =>
+                  setState(() => _tag = i == 1 ? 'Trackable' : 'Dev'),
+              indicatorSize: TabBarIndicatorSize.tab,
+              indicator: BoxDecoration(
+                color: FF.accent,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              labelColor: Colors.white,
+              unselectedLabelColor: FF.textSec,
+              labelStyle: const TextStyle(
+                  fontSize: 13, fontWeight: FontWeight.w600),
+              tabs: const [Tab(text: 'Manual'), Tab(text: 'Trackable')],
+            ),
           ),
           const SizedBox(height: 14),
-          if (_tag == 'Trackable') ...[
-            Text(
-              "Select Platform",
-              style: TextStyle(color: FF.textSec, fontSize: 12),
-            ),
+
+          if (_tag != 'Trackable') ...[
+            Text('Category',
+                style: TextStyle(color: FF.textSec, fontSize: 12)),
             const SizedBox(height: 8),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
-                children: _Platform.values
-                    .where((p) => p != _Platform.none)
-                    .map((p) {
-                      final sel = p == _platform;
-                      return GestureDetector(
-                        onTap: () => setState(() => _platform = p),
-                        child: Container(
-                          margin: const EdgeInsets.only(right: 8),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: sel
-                                ? Colors.orange.withOpacity(0.15)
-                                : FF.card,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: sel ? Colors.orange : FF.divider,
-                            ),
-                          ),
-                          child: Text(
-                            p.name.toUpperCase(),
-                            style: TextStyle(
-                              color: sel ? Colors.orange : FF.textSec,
-                            ),
-                          ),
-                        ),
-                      );
-                    })
-                    .toList(),
+                children: _manualTags.map((t) {
+                  final sel = t == _tag;
+                  return GestureDetector(
+                    onTap: () => setState(() => _tag = t),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: sel ? FF.accent.withOpacity(0.2) : FF.card,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: sel ? FF.accent : FF.divider),
+                      ),
+                      child: Text(t,
+                          style: TextStyle(
+                            color: sel ? FF.accent : FF.textSec,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          )),
+                    ),
+                  );
+                }).toList(),
               ),
             ),
-          ] else ...[
-            // YOUR EXISTING PRIORITY ROW (High, Medium, Low)
-            Text("Priority", style: TextStyle(color: FF.textSec, fontSize: 12)),
+            const SizedBox(height: 14),
+            Text('Priority',
+                style: TextStyle(color: FF.textSec, fontSize: 12)),
             const SizedBox(height: 8),
-
             Row(
               children: _P.values.map((p) {
                 final sel = p == _priority;
@@ -641,27 +762,85 @@ class _AddTaskSheetState extends State<_AddTaskSheet> {
                   child: Container(
                     margin: const EdgeInsets.only(right: 8),
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
+                        horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                       color: sel ? colors[p]!.withOpacity(0.15) : FF.card,
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: sel ? colors[p]! : FF.divider),
+                      border: Border.all(
+                          color: sel ? colors[p]! : FF.divider),
                     ),
-                    child: Text(
-                      labels[p]!,
-                      style: TextStyle(
-                        color: sel ? colors[p] : FF.textSec,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
+                    child: Text(labels[p]!,
+                        style: TextStyle(
+                          color: sel ? colors[p] : FF.textSec,
+                          fontSize: 12, fontWeight: FontWeight.w500,
+                        )),
                   ),
                 );
               }).toList(),
             ),
           ],
+
+          if (_tag == 'Trackable') ...[
+            Text('Platform',
+                style: TextStyle(color: FF.textSec, fontSize: 12)),
+            const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: _Platform.values.map((p) {
+                  final sel = p == _platform;
+                  return GestureDetector(
+                    onTap: () => setState(() => _platform = p),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: sel
+                            ? Colors.orange.withOpacity(0.15)
+                            : FF.card,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: sel ? Colors.orange : FF.divider),
+                      ),
+                      child: Text(p.name.toUpperCase(),
+                          style: TextStyle(
+                            color: sel ? Colors.orange : FF.textSec,
+                            fontSize: 12, fontWeight: FontWeight.w500,
+                          )),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: FF.accent.withOpacity(0.07),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: FF.accent.withOpacity(0.2)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline_rounded,
+                      color: FF.accent, size: 15),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _platform == _Platform.leetcode
+                          ? "Tap ↻ on the card to check if today's POTD is solved."
+                          : _platform == _Platform.github
+                              ? "Tap ↻ on the card to verify you committed today."
+                              : "Tap ↻ on the card to verify you submitted today.",
+                      style: TextStyle(color: FF.accent, fontSize: 11),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
           const SizedBox(height: 20),
           SizedBox(
             width: double.infinity,
@@ -671,37 +850,30 @@ class _AddTaskSheetState extends State<_AddTaskSheet> {
                   : () async {
                       if (_ctrl.text.trim().isEmpty) return;
                       setState(() => _saving = true);
-                      final String detailValue = (_tag == 'Trackable') 
-                ? _platform.name 
-                : _priority.name;
-
-              await widget.onAdd(_ctrl.text.trim(), _tag, detailValue);
-              if (mounted) Navigator.pop(context);
-            },
+                      final detail = _tag == 'Trackable'
+                          ? _platform.name
+                          : _priority.name;
+                      await widget.onAdd(_ctrl.text.trim(), _tag, detail);
+                      if (mounted) Navigator.pop(context);
+                    },
               style: ElevatedButton.styleFrom(
                 backgroundColor: FF.accent,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                    borderRadius: BorderRadius.circular(12)),
                 elevation: 0,
               ),
               child: _saving
                   ? const SizedBox(
-                      width: 20,
-                      height: 20,
+                      width: 20, height: 20,
                       child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2,
-                      ),
+                          color: Colors.white, strokeWidth: 2),
                     )
                   : Text(
                       LocalizationService.t('add_task'),
                       style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15,
-                      ),
+                          fontWeight: FontWeight.w700, fontSize: 15),
                     ),
             ),
           ),
@@ -714,4 +886,4 @@ class _AddTaskSheetState extends State<_AddTaskSheet> {
 
 enum _P { high, medium, low }
 
-enum _Platform { leetcode, codechef, codeforces, github, none }
+enum _Platform { leetcode, codechef, codeforces, github }

@@ -99,6 +99,16 @@ class TaskVerifier {
     switch (task.platform) {
       case TaskPlatform.leetcode:
         final username = accounts['leetcode'] ?? '';
+        print('--- VERIFYING LEETCODE ---');
+  print('Username: "$username"');
+  print('Target Title/Slug: "${task.problemSlug}"');
+
+  final submissions = await LeetCodeService.fetchRecentSubmissions(username);
+  print('Fetched ${submissions.length} submissions');
+
+  for (var sub in submissions.take(5)) {
+    print('Recent Sub: ${sub['title']} | Status: ${sub['statusDisplay']}');
+  }
         if (username.isEmpty) return false;
 
         if (task.isPOTD) {

@@ -1,5 +1,9 @@
+import 'package:FocusFlow/services/database/database_service.dart';
+import 'package:FocusFlow/services/database/database_task.dart';
+import 'package:FocusFlow/services/settings_service.dart';
 import 'package:FocusFlow/views/progress_view.dart';
 import 'package:flutter/material.dart';
+import 'profile_view.dart';
 import 'package:FocusFlow/enums/menu_action.dart';
 import 'package:FocusFlow/services/platform/stats_fetch_service.dart';
 import 'package:FocusFlow/services/weekly_stats_service.dart';
@@ -49,9 +53,10 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
     {'title': 'Team standup notes', 'done': true, 'tag': 'Meeting'},
   ];
 
-  final int _focusMinutesToday = 142;
-  final int _streakDays = 7;
-  final int _sessionsToday = 4;
+  int _focusMinutesToday = 0;
+  int _streakDays = 0;
+  int _sessionsToday = 0;
+  
 
   @override
   void initState() {
@@ -73,6 +78,7 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
       curve: Curves.easeOut,
     );
     _loadCodingStats();
+    _loadProfile();
   }
 
   @override
@@ -192,7 +198,7 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
                 'Today\'s Tasks',
                 onSeeAll: () {
                   context.findAncestorStateOfType<AppShellState>()?.jumpToTab(
-                    2,
+                    7,
                   );
                 },
               ),
@@ -353,8 +359,9 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
           ),
         ),
         const SizedBox(height: 4),
+
         Text(
-          'Ready to focus?',
+          'Ready, ${_displayName} ?',
           style: TextStyle(
             color: FocusFlowTheme.textPrimary,
             fontSize: 26,
@@ -533,8 +540,181 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
 
   // ── Task list ────────────────────────────────
   Widget _buildTaskList() {
-    return Column(
-      children: _tasks.map((task) => _TaskTile(task: task)).toList(),
+    return StreamBuilder<List<DatabaseTask>>(
+      stream: _db.tasksStream(ownerUserId: _uid ?? ''),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.all(16.0),
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+
+        final tasks = snapshot.data?.take(4).toList() ?? [];
+
+        if (tasks.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            child: Text(
+              "No tasks yet. Add one from the Tasks tab 🚀",
+              style: TextStyle(color: FocusFlowTheme.textSecondary),
+            ),
+          );
+        }
+
+        return Column(
+          children: tasks.map((task) {
+            // ── Parse tag & display title (mirrors _TaskCard logic) ──
+            final isTrackable = task.isTrackable;
+
+            final displayTitle = isTrackable
+                ? task.title
+                : task.title.replaceAll(RegExp(r'^\[.*?\]\[.*?\]\s*'), '');
+
+            final tag = isTrackable
+                ? 'Trackable'
+                : (RegExp(r'^\[(.*?)\]').firstMatch(task.title)?.group(1) ??
+                      'Dev');
+
+            final detail = isTrackable
+                ? (task.platform ?? '')
+                : (RegExp(
+                        r'^\[.*?\]\[(.*?)\]',
+                      ).firstMatch(task.title)?.group(1) ??
+                      'medium');
+
+            return _buildRealTaskTile(
+              title: displayTitle,
+              tag: tag,
+              detail: detail,
+              done: task.completed,
+              isTrackable: isTrackable,
+              verified: task.verified,
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
+
+  Widget _buildRealTaskTile({
+    required String title,
+    required String tag,
+    required String detail,
+    required bool done,
+    required bool isTrackable,
+    required bool verified,
+  }) {
+    Color tagColor(String t) {
+      switch (t) {
+        case 'Design':
+          return const Color(0xFFB06EF5);
+        case 'Meeting':
+          return const Color(0xFFFF7043);
+        case 'Trackable':
+          return Colors.orange;
+        case 'Other':
+          return FocusFlowTheme.success;
+        default:
+          return FocusFlowTheme.accent;
+      }
+    }
+
+    final color = tagColor(tag);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: FocusFlowTheme.cardBg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: verified
+              ? FocusFlowTheme.success.withOpacity(0.4)
+              : FocusFlowTheme.divider,
+        ),
+      ),
+      child: Row(
+        children: [
+          // Leading icon/checkbox
+          isTrackable
+              ? Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: (done || verified)
+                        ? FocusFlowTheme.success.withOpacity(0.15)
+                        : Colors.orange.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    (done || verified)
+                        ? Icons.check_rounded
+                        : Icons.code_rounded,
+                    size: 14,
+                    color: (done || verified)
+                        ? FocusFlowTheme.success
+                        : Colors.orange,
+                  ),
+                )
+              : AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    color: done ? FocusFlowTheme.accent : Colors.transparent,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: done
+                          ? FocusFlowTheme.accent
+                          : FocusFlowTheme.textSecondary,
+                      width: 2,
+                    ),
+                  ),
+                  child: done
+                      ? const Icon(Icons.check, size: 13, color: Colors.white)
+                      : null,
+                ),
+
+          const SizedBox(width: 14),
+
+          // Title + badges
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: done
+                        ? FocusFlowTheme.textSecondary
+                        : FocusFlowTheme.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    decoration: done ? TextDecoration.lineThrough : null,
+                    decorationColor: FocusFlowTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 6,
+                  children: [
+                    _SmallBadge(label: tag, color: color),
+                    _SmallBadge(label: detail.toUpperCase(), color: color),
+                    if (verified)
+                      _SmallBadge(
+                        label: 'VERIFIED',
+                        color: FocusFlowTheme.success,
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -691,54 +871,72 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
     );
   }
 
-Future<void> _loadCodingStats() async {
-  final prefs = await SharedPreferences.getInstance();
-  final lcUser = prefs.getString('lc_username') ?? '';
-  final cfUser = prefs.getString('cf_handle') ?? '';
-
-  // If no usernames are set, stop loading immediately
-  if (lcUser.isEmpty && cfUser.isEmpty) {
-    if (mounted) setState(() => _isStatsLoading = false);
-    return;
-  }
-
-  // Set loading to true at the start
-  if (mounted) setState(() => _isStatsLoading = true);
-
-  try {
-    // Run both requests in parallel. If one fails, the other can still succeed.
-    final results = await Future.wait([
-      lcUser.isNotEmpty 
-          ? StatsFetchService.fetchLeetCode(lcUser) 
-          : Future.value(null),
-      cfUser.isNotEmpty 
-          ? StatsFetchService.fetchCodeforces(cfUser) 
-          : Future.value(null),
-    ]).timeout(const Duration(seconds: 12)); // Slightly longer than service timeout
-
-    if (mounted) {
+  String? get _uid => AuthService.firebase().currentUser?.id;
+  final _db = DatabaseService.firebase();
+  bool _loading = true;
+  Map<String, dynamic> _profile = {};
+  Future<void> _loadProfile() async {
+    if (_uid == null) return;
+    final profile = await _db.getUserProfile(ownerUserId: _uid!);
+    if (mounted)
       setState(() {
-        final lcData = results[0];
-        final cfData = results[1];
-
-        if (lcData != null) {
-          _lcSolved = lcData['totalSolved']?.toString() ?? '0';
-        }
-        if (cfData != null) {
-          _cfRating = cfData['rating']?.toString() ?? 'Unrated';
-        }
+        _profile = profile;
+        _loading = false;
       });
+  }
+
+  String get _displayName => (_profile['name'] ?? 'Focus User') as String;
+  Future<void> _loadCodingStats() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lcUser = prefs.getString('lc_username') ?? '';
+    final cfUser = prefs.getString('cf_handle') ?? '';
+
+    // If no usernames are set, stop loading immediately
+    if (lcUser.isEmpty && cfUser.isEmpty) {
+      if (mounted) setState(() => _isStatsLoading = false);
+      return;
     }
-  } catch (e) {
-    debugPrint('Error in _loadCodingStats: $e');
-    // On error, the variables keep their default values ('0' and 'Unrated')
-  } finally {
-    // Ensure loading is set to false no matter what happens
-    if (mounted) {
-      setState(() => _isStatsLoading = false);
+
+    // Set loading to true at the start
+    if (mounted) setState(() => _isStatsLoading = true);
+
+    try {
+      // Run both requests in parallel. If one fails, the other can still succeed.
+      final results =
+          await Future.wait([
+            lcUser.isNotEmpty
+                ? StatsFetchService.fetchLeetCode(lcUser)
+                : Future.value(null),
+            cfUser.isNotEmpty
+                ? StatsFetchService.fetchCodeforces(cfUser)
+                : Future.value(null),
+          ]).timeout(
+            const Duration(seconds: 12),
+          ); // Slightly longer than service timeout
+
+      if (mounted) {
+        setState(() {
+          final lcData = results[0];
+          final cfData = results[1];
+
+          if (lcData != null) {
+            _lcSolved = lcData['totalSolved']?.toString() ?? '0';
+          }
+          if (cfData != null) {
+            _cfRating = cfData['rating']?.toString() ?? 'Unrated';
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error in _loadCodingStats: $e');
+      // On error, the variables keep their default values ('0' and 'Unrated')
+    } finally {
+      // Ensure loading is set to false no matter what happens
+      if (mounted) {
+        setState(() => _isStatsLoading = false);
+      }
     }
   }
-}
 }
 
 // ─────────────────────────────────────────────
@@ -794,6 +992,30 @@ class _StatCard extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
+class _SmallBadge extends StatelessWidget {
+  final String label;
+  final Color color;
+  const _SmallBadge({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+}
 
 class _TaskTile extends StatefulWidget {
   final Map<String, dynamic> task;

@@ -1,3 +1,4 @@
+import 'package:FocusFlow/views/progress_view.dart';
 import 'package:flutter/material.dart';
 import 'package:FocusFlow/views/focus_view.dart';
 import 'package:FocusFlow/views/tasks_view.dart';
@@ -44,16 +45,9 @@ class AppShell extends StatefulWidget {
 class AppShellState extends State<AppShell> with WidgetsBindingObserver {
   int _currentIndex = 0;
   bool _showExitWarning = false;
+  int _progressRefreshTrigger = 0;
 
-  final List<Widget> _screens = [
-    NotesView(embedded: true),
-    FocusView(),
-    TasksView(),
-    FeedView(),       // ← Replaced HabitsView with FeedView
-    AiAgentView(),
-    StudyBuddyView(),
-    ProfileView(),
-  ];
+ 
 
   @override
   void initState() {
@@ -119,10 +113,24 @@ class AppShellState extends State<AppShell> with WidgetsBindingObserver {
       return;
     }
     setState(() => _currentIndex = i);
+    setState(() {
+    _currentIndex = i;
+    if (i == 2) _progressRefreshTrigger++; // Increment to force rebuild
+  });
   }
 
   @override
   Widget build(BuildContext context) {
+     final List<Widget> _screens = [
+    NotesView(embedded: true),
+    FocusView(),
+    ProgressView(key: ValueKey(_progressRefreshTrigger)),
+    FeedView(),       // ← Replaced HabitsView with FeedView
+    AiAgentView(),
+    StudyBuddyView(),
+    ProfileView(),
+    TasksView()
+  ];
     return ListenableBuilder(
       listenable: SettingsService.instance,
       builder: (context, _) {
@@ -324,7 +332,7 @@ class _BottomNav extends StatelessWidget {
     final items = [
       _NavItem(icon: Icons.home_rounded,                label: LocalizationService.t('home')),
       _NavItem(icon: Icons.timer_rounded,               label: LocalizationService.t('focus')),
-      _NavItem(icon: Icons.task_alt_rounded,            label: LocalizationService.t('tasks')),
+      _NavItem(icon: Icons.leaderboard_rounded,            label: LocalizationService.t('Progress')),
       _NavItem(icon: Icons.local_fire_department_rounded, label: LocalizationService.t('feed')),
       _NavItem(icon: Icons.auto_awesome_rounded,        label: LocalizationService.t('ai')),
       _NavItem(icon: Icons.school_rounded,              label: 'Study'),

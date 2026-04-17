@@ -191,4 +191,13 @@ class DatabaseService implements DatabaseProvider {
     final fp = provider as FirebaseDatabaseProvider;
     return fp.habitsStream(ownerUserId: ownerUserId);
   }
+
+  /// Real-time stream of the user document — used by the home screen
+  /// stats row so focus hours, sessions and streak update live.
+  Stream<Map<String, dynamic>> userStatsStream({
+    required String ownerUserId,
+  }) {
+    final fp = provider as FirebaseDatabaseProvider;
+    return fp.userStatsStream(ownerUserId: ownerUserId);
+  }
 }

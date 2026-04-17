@@ -39,36 +39,23 @@ class NotesView extends StatefulWidget {
 }
 
 class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
+  // ── coding stats ────────────────────────────
   String _lcSolved = '0';
   String _cfRating = 'Unrated';
   bool _isStatsLoading = true;
+
+  // ── animation ───────────────────────────────
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
 
-  // Sample data – replace with real data from your service
-  final List<Map<String, dynamic>> _tasks = [
-    {'title': 'Design onboarding flow', 'done': true, 'tag': 'Design'},
-    {'title': 'Write unit tests', 'done': false, 'tag': 'Dev'},
-    {'title': 'Review pull requests', 'done': false, 'tag': 'Dev'},
-    {'title': 'Team standup notes', 'done': true, 'tag': 'Meeting'},
-  ];
-
-  int _focusMinutesToday = 0;
-  int _streakDays = 0;
-  int _sessionsToday = 0;
-  
+  // ── profile ─────────────────────────────────
+  String? get _uid => AuthService.firebase().currentUser?.id;
+  final _db = DatabaseService.firebase();
+  Map<String, dynamic> _profile = {};
 
   @override
   void initState() {
     super.initState();
-    _fadeController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 700),
-    )..forward();
-    _fadeAnimation = CurvedAnimation(
-      parent: _fadeController,
-      curve: Curves.easeOut,
-    );
     _fadeController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 700),
@@ -95,8 +82,303 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
     return 'Good evening';
   }
 
-  String _fmtMinutes(int mins) => '${mins ~/ 60}h ${mins % 60}m';
+  String get _displayName => (_profile['name'] ?? 'Focus User') as String;
 
+  /// Converts a raw focusHours int from the DB into a readable string.
+  /// focusHours is stored as whole hours; we display it as "Xh" or "Xh Ym"
+  /// if you later switch to storing minutes.
+  String _fmtHours(int hours) => '${hours}h 0m';
+
+  Future<void> _loadProfile() async {
+    if (_uid == null) return;
+    final profile = await _db.getUserProfile(ownerUserId: _uid!);
+    if (mounted) setState(() => _profile = profile);
+  }
+
+  Future<void> _loadCodingStats() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lcUser = prefs.getString('lc_username') ?? '';
+    final cfUser = prefs.getString('cf_handle') ?? '';
+
+    if (lcUser.isEmpty && cfUser.isEmpty) {
+      if (mounted) setState(() => _isStatsLoading = false);
+      return;
+    }
+
+    if (mounted) setState(() => _isStatsLoading = true);
+
+    try {
+      final results = await Future.wait([
+        lcUser.isNotEmpty
+            ? StatsFetchService.fetchLeetCode(lcUser)
+            : Future.value(null),
+        cfUser.isNotEmpty
+            ? StatsFetchService.fetchCodeforces(cfUser)
+            : Future.value(null),
+      ]).timeout(const Duration(seconds: 12));
+
+      if (mounted) {
+        setState(() {
+          final lcData = results[0];
+          final cfData = results[1];
+          if (lcData != null) {
+            _lcSolved = lcData['totalSolved']?.toString() ?? '0';
+          }
+          if (cfData != null) {
+            _cfRating = cfData['rating']?.toString() ?? 'Unrated';
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error in _loadCodingStats: $e');
+    } finally {
+      if (mounted) setState(() => _isStatsLoading = false);
+    }
+  }
+
+  // ── build ────────────────────────────────────
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: FocusFlowTheme.background,
+      appBar: _buildAppBar(),
+      body: FadeTransition(
+        opacity: _fadeAnimation,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 4),
+              _buildGreetingHeader(),
+              const SizedBox(height: 24),
+              // Stats row streams live from Firebase
+              _buildStatsRow(),
+              const SizedBox(height: 28),
+              _buildStartFocusCard(),
+              const SizedBox(height: 28),
+              _buildSectionHeader(
+                "Today's Tasks",
+                onSeeAll: () {
+                  context
+                      .findAncestorStateOfType<AppShellState>()
+                      ?.jumpToTab(7);
+                },
+              ),
+              const SizedBox(height: 12),
+              _buildTaskList(),
+              const SizedBox(height: 28),
+              _buildSectionHeader(
+                'See your Progress',
+                onSeeAll: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ProgressView()),
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
+              _buildCodingStatsCard(),
+              const SizedBox(height: 28),
+              _buildSectionHeader(
+                'Weekly Progress',
+                onSeeAll: () {
+                  context
+                      .findAncestorStateOfType<AppShellState>()
+                      ?.jumpToTab(5);
+                },
+              ),
+              const SizedBox(height: 12),
+              _buildWeeklyProgress(),
+              const SizedBox(height: 28),
+              _buildQuickActionsRow(),
+              const SizedBox(height: 32),
+            ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: widget.embedded ? null : _buildBottomNav(),
+      floatingActionButton: widget.embedded ? null : _buildFAB(),
+    );
+  }
+
+  // ── AppBar ───────────────────────────────────
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      backgroundColor: FocusFlowTheme.background,
+      elevation: 0,
+      titleSpacing: 20,
+      title: Row(
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: FocusFlowTheme.accent,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(Icons.bolt, color: Colors.white, size: 18),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            'FocusFlow',
+            style: TextStyle(
+              color: FocusFlowTheme.textPrimary,
+              fontWeight: FontWeight.w700,
+              fontSize: 20,
+              letterSpacing: 0.4,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        IconButton(
+          onPressed: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('No new notifications'),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          },
+          icon: Icon(
+            Icons.notifications_outlined,
+            color: FocusFlowTheme.textSecondary,
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: PopupMenuButton<MenuAction>(
+            offset: const Offset(0, 48),
+            color: FocusFlowTheme.cardBg,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: FocusFlowTheme.divider),
+            ),
+            onSelected: (value) async {
+              switch (value) {
+                case MenuAction.logout:
+                  final shouldLogout = await showLogoutDialog(context);
+                  if (shouldLogout && mounted) {
+                    AuthService.firebase().Logout();
+                    Navigator.of(context)
+                        .pushNamedAndRemoveUntil('/login', (route) => false);
+                  }
+              }
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem<MenuAction>(
+                value: MenuAction.logout,
+                child: Row(
+                  children: [
+                    Icon(Icons.logout_rounded,
+                        size: 18, color: FocusFlowTheme.textSecondary),
+                    const SizedBox(width: 10),
+                    Text('Log Out',
+                        style: TextStyle(color: FocusFlowTheme.textPrimary)),
+                  ],
+                ),
+              ),
+            ],
+            child: CircleAvatar(
+              radius: 17,
+              backgroundColor: FocusFlowTheme.accentSoft,
+              child: Text(
+                _displayName.isNotEmpty
+                    ? _displayName[0].toUpperCase()
+                    : 'U',
+                style: TextStyle(
+                  color: FocusFlowTheme.accent,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Greeting header ──────────────────────────
+  Widget _buildGreetingHeader() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '$_greeting 👋',
+          style: TextStyle(
+            color: FocusFlowTheme.textSecondary,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Ready, $_displayName ?',
+          style: TextStyle(
+            color: FocusFlowTheme.textPrimary,
+            fontSize: 26,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.5,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Stats row — streams live from Firebase ───
+  Widget _buildStatsRow() {
+    return StreamBuilder<Map<String, dynamic>>(
+      stream: _uid != null
+          ? _db.userStatsStream(ownerUserId: _uid!)
+          : const Stream.empty(),
+      builder: (context, snapshot) {
+        final stats = snapshot.data ?? {};
+
+        // focusHours is stored as whole hours in your DB
+        final focusHours =
+            (stats['focusHours'] as num?)?.toInt() ?? 0;
+        final streak =
+            (stats['streak'] as num?)?.toInt() ?? 0;
+        final sessions =
+            (stats['totalSessions'] as num?)?.toInt() ?? 0;
+
+        return Row(
+          children: [
+            Expanded(
+              child: _StatCard(
+                icon: Icons.timer_outlined,
+                label: 'Focus Time',
+                value: _fmtHours(focusHours),
+                color: FocusFlowTheme.accent,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _StatCard(
+                icon: Icons.local_fire_department_outlined,
+                label: 'Day Streak',
+                value: '$streak days',
+                color: const Color(0xFFFF7043),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _StatCard(
+                icon: Icons.check_circle_outline,
+                label: 'Sessions',
+                value: '$sessions total',
+                color: FocusFlowTheme.success,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // ── Coding stats card ────────────────────────
   Widget _buildCodingStatsCard() {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -113,14 +395,13 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
                 icon: Icons.code_rounded,
                 color: const Color(0xFFFFA116),
                 label: 'LeetCode',
-                value: '$_lcSolved Solved', // Updated
+                value: '$_lcSolved Solved',
               ),
-              // ... divider ...
               _miniPlatformStat(
                 icon: Icons.trending_up_rounded,
                 color: const Color(0xFF4F8EF7),
                 label: 'Codeforces',
-                value: _cfRating, // Updated
+                value: _cfRating,
               ),
             ],
           ),
@@ -174,239 +455,6 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
     );
   }
 
-  // ── build ────────────────────────────────────
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: FocusFlowTheme.background,
-      appBar: _buildAppBar(),
-      body: FadeTransition(
-        opacity: _fadeAnimation,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 4),
-              _buildGreetingHeader(),
-              const SizedBox(height: 24),
-              _buildStatsRow(),
-              const SizedBox(height: 28),
-              _buildStartFocusCard(),
-              const SizedBox(height: 28),
-              _buildSectionHeader(
-                'Today\'s Tasks',
-                onSeeAll: () {
-                  context.findAncestorStateOfType<AppShellState>()?.jumpToTab(
-                    7,
-                  );
-                },
-              ),
-              const SizedBox(height: 12),
-              _buildTaskList(),
-              const SizedBox(height: 28),
-              _buildSectionHeader(
-                'See you Progress',
-                onSeeAll: () {
-                  // Navigate to your progress view
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const ProgressView()),
-                  );
-                },
-              ),
-              const SizedBox(height: 12),
-              _buildCodingStatsCard(),
-
-              const SizedBox(height: 28),
-              _buildSectionHeader(
-                'Weekly Progress',
-                onSeeAll: () {
-                  context.findAncestorStateOfType<AppShellState>()?.jumpToTab(
-                    5,
-                  );
-                },
-              ),
-              const SizedBox(height: 12),
-              _buildWeeklyProgress(),
-              const SizedBox(height: 28),
-              _buildQuickActionsRow(),
-              const SizedBox(height: 32),
-            ],
-          ),
-        ),
-      ),
-      bottomNavigationBar: widget.embedded ? null : _buildBottomNav(),
-      floatingActionButton: widget.embedded ? null : _buildFAB(),
-    );
-  }
-
-  // ── AppBar ───────────────────────────────────
-  PreferredSizeWidget _buildAppBar() {
-    return AppBar(
-      backgroundColor: FocusFlowTheme.background,
-      elevation: 0,
-      titleSpacing: 20,
-      title: Row(
-        children: [
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(
-              color: FocusFlowTheme.accent,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(Icons.bolt, color: Colors.white, size: 18),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            'FocusFlow',
-            style: TextStyle(
-              color: FocusFlowTheme.textPrimary,
-              fontWeight: FontWeight.w700,
-              fontSize: 20,
-              letterSpacing: 0.4,
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        // Notification bell
-        IconButton(
-          onPressed: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('No new notifications'),
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
-          },
-          icon: Icon(
-            Icons.notifications_outlined,
-            color: FocusFlowTheme.textSecondary,
-          ),
-        ),
-        // Avatar + popup menu
-        Padding(
-          padding: const EdgeInsets.only(right: 12),
-          child: PopupMenuButton<MenuAction>(
-            offset: const Offset(0, 48),
-            color: FocusFlowTheme.cardBg,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-              side: BorderSide(color: FocusFlowTheme.divider),
-            ),
-            onSelected: (value) async {
-              switch (value) {
-                case MenuAction.logout:
-                  final shouldLogout = await showLogoutDialog(context);
-                  if (shouldLogout && mounted) {
-                    AuthService.firebase().Logout();
-                    Navigator.of(
-                      context,
-                    ).pushNamedAndRemoveUntil('/login', (route) => false);
-                  }
-              }
-            },
-            itemBuilder: (context) => [
-              PopupMenuItem<MenuAction>(
-                value: MenuAction.logout,
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.logout_rounded,
-                      size: 18,
-                      color: FocusFlowTheme.textSecondary,
-                    ),
-                    SizedBox(width: 10),
-                    Text(
-                      'Log Out',
-                      style: TextStyle(color: FocusFlowTheme.textPrimary),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            child: CircleAvatar(
-              radius: 17,
-              backgroundColor: FocusFlowTheme.accentSoft,
-              child: Text(
-                'U',
-                style: TextStyle(
-                  color: FocusFlowTheme.accent,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ── Greeting header ──────────────────────────
-  Widget _buildGreetingHeader() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '$_greeting 👋',
-          style: TextStyle(
-            color: FocusFlowTheme.textSecondary,
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        const SizedBox(height: 4),
-
-        Text(
-          'Ready, ${_displayName} ?',
-          style: TextStyle(
-            color: FocusFlowTheme.textPrimary,
-            fontSize: 26,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -0.5,
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ── Stats row ────────────────────────────────
-  Widget _buildStatsRow() {
-    return Row(
-      children: [
-        Expanded(
-          child: _StatCard(
-            icon: Icons.timer_outlined,
-            label: 'Focus Time',
-            value: _fmtMinutes(_focusMinutesToday),
-            color: FocusFlowTheme.accent,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _StatCard(
-            icon: Icons.local_fire_department_outlined,
-            label: 'Day Streak',
-            value: '$_streakDays days',
-            color: const Color(0xFFFF7043),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _StatCard(
-            icon: Icons.check_circle_outline,
-            label: 'Sessions',
-            value: '$_sessionsToday today',
-            color: FocusFlowTheme.success,
-          ),
-        ),
-      ],
-    );
-  }
-
   // ── Start Focus card ─────────────────────────
   Widget _buildStartFocusCard() {
     return Container(
@@ -453,9 +501,9 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
                 const SizedBox(height: 16),
                 ElevatedButton.icon(
                   onPressed: () {
-                    context.findAncestorStateOfType<AppShellState>()?.jumpToTab(
-                      1,
-                    );
+                    context
+                        .findAncestorStateOfType<AppShellState>()
+                        ?.jumpToTab(1);
                   },
                   icon: const Icon(Icons.play_arrow_rounded, size: 18),
                   label: const Text('Begin'),
@@ -463,23 +511,17 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
                     backgroundColor: FocusFlowTheme.accent,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 10,
-                    ),
+                        horizontal: 20, vertical: 10),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
+                        borderRadius: BorderRadius.circular(10)),
                     textStyle: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                    ),
+                        fontWeight: FontWeight.w600, fontSize: 14),
                     elevation: 0,
                   ),
                 ),
               ],
             ),
           ),
-          // Timer ring graphic
           SizedBox(
             width: 80,
             height: 80,
@@ -490,9 +532,8 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
                   value: 0.6,
                   strokeWidth: 6,
                   backgroundColor: FocusFlowTheme.accentSoft,
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    FocusFlowTheme.accent,
-                  ),
+                  valueColor:
+                      AlwaysStoppedAnimation<Color>(FocusFlowTheme.accent),
                 ),
                 Text(
                   '25:00',
@@ -538,21 +579,29 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
     );
   }
 
-  // ── Task list ────────────────────────────────
+  // ── Task list — real data with proper task cards ──
   Widget _buildTaskList() {
     return StreamBuilder<List<DatabaseTask>>(
-      stream: _db.tasksStream(ownerUserId: _uid ?? ''),
+      stream: _uid != null
+          ? _db.tasksStream(ownerUserId: _uid!)
+          : const Stream.empty(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
+          return Center(
             child: Padding(
-              padding: EdgeInsets.all(16.0),
-              child: CircularProgressIndicator(),
+              padding: const EdgeInsets.all(16.0),
+              child: CircularProgressIndicator(color: FocusFlowTheme.accent),
             ),
           );
         }
 
-        final tasks = snapshot.data?.take(4).toList() ?? [];
+        // Show first 4, prioritise incomplete tasks first
+        final all = snapshot.data ?? [];
+        final sorted = [...all..sort((a, b) {
+          if (a.completed == b.completed) return 0;
+          return a.completed ? 1 : -1;
+        })];
+        final tasks = sorted.take(4).toList();
 
         if (tasks.isEmpty) {
           return Padding(
@@ -565,48 +614,30 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
         }
 
         return Column(
-          children: tasks.map((task) {
-            // ── Parse tag & display title (mirrors _TaskCard logic) ──
-            final isTrackable = task.isTrackable;
-
-            final displayTitle = isTrackable
-                ? task.title
-                : task.title.replaceAll(RegExp(r'^\[.*?\]\[.*?\]\s*'), '');
-
-            final tag = isTrackable
-                ? 'Trackable'
-                : (RegExp(r'^\[(.*?)\]').firstMatch(task.title)?.group(1) ??
-                      'Dev');
-
-            final detail = isTrackable
-                ? (task.platform ?? '')
-                : (RegExp(
-                        r'^\[.*?\]\[(.*?)\]',
-                      ).firstMatch(task.title)?.group(1) ??
-                      'medium');
-
-            return _buildRealTaskTile(
-              title: displayTitle,
-              tag: tag,
-              detail: detail,
-              done: task.completed,
-              isTrackable: isTrackable,
-              verified: task.verified,
-            );
-          }).toList(),
+          children: tasks.map((task) => _buildTaskCard(task)).toList(),
         );
       },
     );
   }
 
-  Widget _buildRealTaskTile({
-    required String title,
-    required String tag,
-    required String detail,
-    required bool done,
-    required bool isTrackable,
-    required bool verified,
-  }) {
+  /// Renders a single task using the same visual language as TasksView.
+  Widget _buildTaskCard(DatabaseTask task) {
+    // ── parse tag & display title ──────────────
+    final isTrackable = task.isTrackable;
+
+    final displayTitle = isTrackable
+        ? task.title
+        : task.title.replaceAll(RegExp(r'^\[.*?\]\[.*?\]\s*'), '');
+
+    final tag = isTrackable
+        ? 'Trackable'
+        : (RegExp(r'^\[(.*?)\]').firstMatch(task.title)?.group(1) ?? 'Dev');
+
+    final detail = isTrackable
+        ? (task.platform ?? '')
+        : (RegExp(r'^\[.*?\]\[(.*?)\]').firstMatch(task.title)?.group(1) ??
+            'medium');
+
     Color tagColor(String t) {
       switch (t) {
         case 'Design':
@@ -623,6 +654,46 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
     }
 
     final color = tagColor(tag);
+    final done = task.completed;
+    final verified = task.verified;
+
+    // ── leading icon ──────────────────────────
+    Widget leading;
+    if (isTrackable) {
+      final isDone = done || verified;
+      leading = Container(
+        width: 24,
+        height: 24,
+        decoration: BoxDecoration(
+          color: isDone
+              ? FocusFlowTheme.success.withOpacity(0.15)
+              : Colors.orange.withOpacity(0.1),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(
+          isDone ? Icons.check_rounded : _platformIcon(task.platform),
+          size: 14,
+          color: isDone ? FocusFlowTheme.success : Colors.orange,
+        ),
+      );
+    } else {
+      leading = AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        width: 22,
+        height: 22,
+        decoration: BoxDecoration(
+          color: done ? FocusFlowTheme.accent : Colors.transparent,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: done ? FocusFlowTheme.accent : FocusFlowTheme.textSecondary,
+            width: 2,
+          ),
+        ),
+        child: done
+            ? const Icon(Icons.check, size: 13, color: Colors.white)
+            : null,
+      );
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -638,55 +709,14 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
       ),
       child: Row(
         children: [
-          // Leading icon/checkbox
-          isTrackable
-              ? Container(
-                  width: 24,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    color: (done || verified)
-                        ? FocusFlowTheme.success.withOpacity(0.15)
-                        : Colors.orange.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    (done || verified)
-                        ? Icons.check_rounded
-                        : Icons.code_rounded,
-                    size: 14,
-                    color: (done || verified)
-                        ? FocusFlowTheme.success
-                        : Colors.orange,
-                  ),
-                )
-              : AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: 22,
-                  height: 22,
-                  decoration: BoxDecoration(
-                    color: done ? FocusFlowTheme.accent : Colors.transparent,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: done
-                          ? FocusFlowTheme.accent
-                          : FocusFlowTheme.textSecondary,
-                      width: 2,
-                    ),
-                  ),
-                  child: done
-                      ? const Icon(Icons.check, size: 13, color: Colors.white)
-                      : null,
-                ),
-
+          leading,
           const SizedBox(width: 14),
-
-          // Title + badges
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  title,
+                  displayTitle,
                   style: TextStyle(
                     color: done
                         ? FocusFlowTheme.textSecondary
@@ -702,12 +732,15 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
                   spacing: 6,
                   children: [
                     _SmallBadge(label: tag, color: color),
-                    _SmallBadge(label: detail.toUpperCase(), color: color),
+                    if (detail.isNotEmpty)
+                      _SmallBadge(
+                          label: detail.toUpperCase(), color: color),
+                    if (isTrackable && (task.isPOTD ?? false))
+                      _SmallBadge(
+                          label: 'POTD', color: FocusFlowTheme.accent),
                     if (verified)
                       _SmallBadge(
-                        label: 'VERIFIED',
-                        color: FocusFlowTheme.success,
-                      ),
+                          label: 'VERIFIED', color: FocusFlowTheme.success),
                   ],
                 ),
               ],
@@ -718,13 +751,26 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
     );
   }
 
+  IconData _platformIcon(String? platform) {
+    switch (platform?.toLowerCase()) {
+      case 'leetcode':
+        return Icons.code_rounded;
+      case 'github':
+        return Icons.source_rounded;
+      case 'codeforces':
+      case 'codechef':
+        return Icons.terminal_rounded;
+      default:
+        return Icons.analytics_outlined;
+    }
+  }
+
   // ── Weekly progress ──────────────────────────
   Widget _buildWeeklyProgress() {
     return FutureBuilder(
       future: WeeklyStatsService.fetchCurrentWeek(),
       builder: (context, snapshot) {
-        final data =
-            snapshot.data ??
+        final data = snapshot.data ??
             List.generate(
               7,
               (i) => DayStats(
@@ -733,9 +779,8 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
                 isToday: i == DateTime.now().weekday - 1,
               ),
             );
-        final maxMins = data
-            .map((d) => d.minutes)
-            .fold(1, (a, b) => a > b ? a : b);
+        final maxMins =
+            data.map((d) => d.minutes).fold(1, (a, b) => a > b ? a : b);
 
         return Container(
           padding: const EdgeInsets.all(20),
@@ -748,7 +793,8 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: List.generate(7, (i) {
               final d = data[i];
-              final height = d.minutes == 0 ? 4.0 : (d.minutes / maxMins) * 72;
+              final height =
+                  d.minutes == 0 ? 4.0 : (d.minutes / maxMins) * 72;
               return Expanded(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -806,9 +852,9 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
               icon: a['icon'] as IconData,
               label: a['label'] as String,
               onTap: () {
-                context.findAncestorStateOfType<AppShellState>()?.jumpToTab(
-                  a['tab'] as int,
-                );
+                context
+                    .findAncestorStateOfType<AppShellState>()
+                    ?.jumpToTab(a['tab'] as int);
               },
             ),
           ),
@@ -831,28 +877,18 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
         selectedItemColor: FocusFlowTheme.accent,
         unselectedItemColor: FocusFlowTheme.textSecondary,
         currentIndex: 0,
-        selectedLabelStyle: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-        ),
-        unselectedLabelStyle: TextStyle(fontSize: 11),
-        items: [
+        selectedLabelStyle:
+            const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+        unselectedLabelStyle: const TextStyle(fontSize: 11),
+        items: const [
           BottomNavigationBarItem(
-            icon: Icon(Icons.home_rounded),
-            label: 'Home',
-          ),
+              icon: Icon(Icons.home_rounded), label: 'Home'),
           BottomNavigationBarItem(
-            icon: Icon(Icons.timer_outlined),
-            label: 'Focus',
-          ),
+              icon: Icon(Icons.timer_outlined), label: 'Focus'),
           BottomNavigationBarItem(
-            icon: Icon(Icons.task_alt_outlined),
-            label: 'Tasks',
-          ),
+              icon: Icon(Icons.task_alt_outlined), label: 'Tasks'),
           BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline_rounded),
-            label: 'Profile',
-          ),
+              icon: Icon(Icons.person_outline_rounded), label: 'Profile'),
         ],
       ),
     );
@@ -867,75 +903,8 @@ class _NotesViewState extends State<NotesView> with TickerProviderStateMixin {
       backgroundColor: FocusFlowTheme.accent,
       foregroundColor: Colors.white,
       elevation: 4,
-      child: Icon(Icons.add_rounded),
+      child: const Icon(Icons.add_rounded),
     );
-  }
-
-  String? get _uid => AuthService.firebase().currentUser?.id;
-  final _db = DatabaseService.firebase();
-  bool _loading = true;
-  Map<String, dynamic> _profile = {};
-  Future<void> _loadProfile() async {
-    if (_uid == null) return;
-    final profile = await _db.getUserProfile(ownerUserId: _uid!);
-    if (mounted)
-      setState(() {
-        _profile = profile;
-        _loading = false;
-      });
-  }
-
-  String get _displayName => (_profile['name'] ?? 'Focus User') as String;
-  Future<void> _loadCodingStats() async {
-    final prefs = await SharedPreferences.getInstance();
-    final lcUser = prefs.getString('lc_username') ?? '';
-    final cfUser = prefs.getString('cf_handle') ?? '';
-
-    // If no usernames are set, stop loading immediately
-    if (lcUser.isEmpty && cfUser.isEmpty) {
-      if (mounted) setState(() => _isStatsLoading = false);
-      return;
-    }
-
-    // Set loading to true at the start
-    if (mounted) setState(() => _isStatsLoading = true);
-
-    try {
-      // Run both requests in parallel. If one fails, the other can still succeed.
-      final results =
-          await Future.wait([
-            lcUser.isNotEmpty
-                ? StatsFetchService.fetchLeetCode(lcUser)
-                : Future.value(null),
-            cfUser.isNotEmpty
-                ? StatsFetchService.fetchCodeforces(cfUser)
-                : Future.value(null),
-          ]).timeout(
-            const Duration(seconds: 12),
-          ); // Slightly longer than service timeout
-
-      if (mounted) {
-        setState(() {
-          final lcData = results[0];
-          final cfData = results[1];
-
-          if (lcData != null) {
-            _lcSolved = lcData['totalSolved']?.toString() ?? '0';
-          }
-          if (cfData != null) {
-            _cfRating = cfData['rating']?.toString() ?? 'Unrated';
-          }
-        });
-      }
-    } catch (e) {
-      debugPrint('Error in _loadCodingStats: $e');
-      // On error, the variables keep their default values ('0' and 'Unrated')
-    } finally {
-      // Ensure loading is set to false no matter what happens
-      if (mounted) {
-        setState(() => _isStatsLoading = false);
-      }
-    }
   }
 }
 
@@ -983,7 +952,8 @@ class _StatCard extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             label,
-            style: TextStyle(color: FocusFlowTheme.textSecondary, fontSize: 11),
+            style:
+                TextStyle(color: FocusFlowTheme.textSecondary, fontSize: 11),
           ),
         ],
       ),
@@ -992,6 +962,7 @@ class _StatCard extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
+
 class _SmallBadge extends StatelessWidget {
   final String label;
   final Color color;
@@ -1012,108 +983,6 @@ class _SmallBadge extends StatelessWidget {
           fontSize: 10,
           fontWeight: FontWeight.bold,
         ),
-      ),
-    );
-  }
-}
-
-class _TaskTile extends StatefulWidget {
-  final Map<String, dynamic> task;
-  const _TaskTile({required this.task});
-
-  @override
-  State<_TaskTile> createState() => _TaskTileState();
-}
-
-class _TaskTileState extends State<_TaskTile> {
-  late bool _done;
-
-  @override
-  void initState() {
-    super.initState();
-    _done = widget.task['done'] as bool;
-  }
-
-  Color _tagColor(String tag) {
-    switch (tag) {
-      case 'Design':
-        return const Color(0xFFB06EF5);
-      case 'Dev':
-        return FocusFlowTheme.accent;
-      case 'Meeting':
-        return const Color(0xFFFF7043);
-      default:
-        return FocusFlowTheme.success;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: FocusFlowTheme.cardBg,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: FocusFlowTheme.divider),
-      ),
-      child: Row(
-        children: [
-          // Checkbox
-          GestureDetector(
-            onTap: () => setState(() => _done = !_done),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              width: 22,
-              height: 22,
-              decoration: BoxDecoration(
-                color: _done ? FocusFlowTheme.accent : Colors.transparent,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: _done
-                      ? FocusFlowTheme.accent
-                      : FocusFlowTheme.textSecondary,
-                  width: 2,
-                ),
-              ),
-              child: _done
-                  ? Icon(Icons.check, size: 13, color: Colors.white)
-                  : null,
-            ),
-          ),
-          const SizedBox(width: 14),
-          // Title
-          Expanded(
-            child: Text(
-              widget.task['title'] as String,
-              style: TextStyle(
-                color: _done
-                    ? FocusFlowTheme.textSecondary
-                    : FocusFlowTheme.textPrimary,
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                decoration: _done ? TextDecoration.lineThrough : null,
-                decorationColor: FocusFlowTheme.textSecondary,
-              ),
-            ),
-          ),
-          // Tag badge
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: _tagColor(widget.task['tag'] as String).withOpacity(0.15),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              widget.task['tag'] as String,
-              style: TextStyle(
-                color: _tagColor(widget.task['tag'] as String),
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1162,6 +1031,8 @@ class _QuickActionButton extends StatelessWidget {
   }
 }
 
+// ─────────────────────────────────────────────
+
 Future<bool> showLogoutDialog(BuildContext context) {
   return showDialog<bool>(
     context: context,
@@ -1195,9 +1066,8 @@ Future<bool> showLogoutDialog(BuildContext context) {
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.redAccent,
             foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             elevation: 0,
           ),
           child: const Text('Log out'),

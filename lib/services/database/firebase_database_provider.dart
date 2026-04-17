@@ -56,6 +56,18 @@ class FirebaseDatabaseProvider implements DatabaseProvider {
     await _db.child("users/$ownerUserId").update(updates);
   }
 
+  // Real-time stream of the user stats node
+  Stream<Map<String, dynamic>> userStatsStream({
+    required String ownerUserId,
+  }) {
+    return _db.child("users/$ownerUserId").onValue.map((event) {
+      if (!event.snapshot.exists) return <String, dynamic>{};
+      return Map<String, dynamic>.from(
+        event.snapshot.value as Map<dynamic, dynamic>,
+      );
+    });
+  }
+
   // ─── Tasks ───────────────────────────────────────────
   @override
   Future<DatabaseTask> createTask({

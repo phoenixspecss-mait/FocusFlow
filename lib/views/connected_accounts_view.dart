@@ -1,3 +1,4 @@
+import 'package:FocusFlow/views/widgets/skeleton_loader.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -170,7 +171,7 @@ await _db.child('leaderboard/$uid').update({
             style: TextStyle(color: FF.textPri, fontWeight: FontWeight.w800, fontSize: 18)),
       ),
       body: _loading
-          ? Center(child: CircularProgressIndicator(color: FF.accent))
+          ? const ConnectedAccountsSkeleton()
           : ListView(
               padding: const EdgeInsets.all(20),
               children: [

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:FocusFlow/views/connected_accounts_view.dart';
+import 'package:FocusFlow/views/widgets/skeleton_loader.dart';
 import 'package:FocusFlow/services/settings_service.dart';
 import 'package:FocusFlow/views/timer_settings_view.dart';
 import 'package:firebase_database/firebase_database.dart';
@@ -199,7 +200,7 @@ class _ProfileViewState extends State<ProfileView> {
             ],
           ),
           body: _loading
-              ? Center(child: CircularProgressIndicator(color: FF.accent))
+              ? const ProfileViewSkeleton()
               : SingleChildScrollView(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                   child: Column(children: [

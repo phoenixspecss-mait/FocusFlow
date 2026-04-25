@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:FocusFlow/views/app_shell.dart';
 import 'package:FocusFlow/services/timer_settings_service.dart';
+import 'package:FocusFlow/views/widgets/skeleton_loader.dart';
 
 class TimerSettingsView extends StatefulWidget {
   const TimerSettingsView({super.key});
@@ -68,7 +69,7 @@ class _TimerSettingsViewState extends State<TimerSettingsView> {
         ),
       ),
       body: !_svc.loaded
-          ? Center(child: CircularProgressIndicator(color: FF.accent))
+          ? const TimerSettingsSkeleton()
           : SingleChildScrollView(
               padding: const EdgeInsets.all(20),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

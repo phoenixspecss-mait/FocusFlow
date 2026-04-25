@@ -6,6 +6,7 @@ import 'package:FocusFlow/services/platform/leetcode_service.dart';
 import 'package:FocusFlow/services/platform/github_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:FocusFlow/views/widgets/skeleton_loader.dart';
 
 // ─── Custom Pie Chart Painter ────────────────────────────────────────────────
 
@@ -313,7 +314,7 @@ class _ProgressViewState extends State<ProgressView>
         ),
       ),
       body: loading
-          ? Center(child: CircularProgressIndicator(color: FF.accent, strokeWidth: 2))
+          ? const ProgressViewSkeleton()
           : (lcData == null && cfData == null && ghStats == null)
               ? _buildEmpty()
               : _buildContent(),
@@ -696,33 +697,37 @@ class _ProgressViewState extends State<ProgressView>
           )),
           const SizedBox(height: 16),
 
-          // Day labels row: Sun Mon Tue Wed Thu Fri Sat
+          // Day labels (fixed left) + scrollable heatmap grid side by side
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SizedBox(width: 2),
-              ..._buildDayLabels(),
-            ],
-          ),
-          const SizedBox(height: 4),
-
-          // Scrollable heatmap grid
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            reverse: true, // show most recent on the right
-            child: AnimatedBuilder(
-              animation: _heatmapAnim,
-              builder: (_, __) => CustomPaint(
-                size: Size(
-                  _HeatmapPainter.canvasWidth(),
-                  _HeatmapPainter.canvasHeight(),
-                ),
-                painter: _HeatmapPainter(
-                  data: heatmap,
-                  baseColor: color,
-                  progress: _heatmapAnim.value,
+              // Fixed day-of-week labels column
+              Column(
+                children: _buildDayLabels(),
+              ),
+              const SizedBox(width: 4),
+              // Scrollable heatmap grid
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  reverse: true, // show most recent on the right
+                  child: AnimatedBuilder(
+                    animation: _heatmapAnim,
+                    builder: (_, __) => CustomPaint(
+                      size: Size(
+                        _HeatmapPainter.canvasWidth(),
+                        _HeatmapPainter.canvasHeight(),
+                      ),
+                      painter: _HeatmapPainter(
+                        data: heatmap,
+                        baseColor: color,
+                        progress: _heatmapAnim.value,
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
 
           const SizedBox(height: 14),
@@ -754,10 +759,11 @@ class _ProgressViewState extends State<ProgressView>
   }
 
   List<Widget> _buildDayLabels() {
+    // Match the heatmap cell step: _cellSize(11) + _gap(3) = 14
     const labels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
     return labels.map((l) => SizedBox(
-      width: 14,
-      height: 14,
+      width: 12,
+      height: 14, // same as _HeatmapPainter._step
       child: Center(
         child: Text(l, style: TextStyle(
           color: FF.textSec.withOpacity(0.4), fontSize: 8.5,

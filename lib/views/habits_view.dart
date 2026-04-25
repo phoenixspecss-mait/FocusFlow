@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:FocusFlow/views/widgets/skeleton_loader.dart';
 import 'package:FocusFlow/views/app_shell.dart';
 import 'package:FocusFlow/services/auth/auth_service.dart';
 import 'package:FocusFlow/services/database/database_service.dart';
@@ -103,7 +104,7 @@ class _HabitsViewState extends State<HabitsView> {
         ],
       ),
       body: _loading
-          ? Center(child: CircularProgressIndicator(color: FF.accent))
+          ? const HabitsViewSkeleton()
           : Column(children: [
               _buildProgressBar(),
               Expanded(child: _habits.isEmpty ? _buildEmpty() : _buildList()),

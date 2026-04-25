@@ -16,7 +16,7 @@ Future<String> _callGemini(String prompt,
     {int maxTokens = 1500, double temp = 0.7, bool expectJson = false}) async {
   final url = Uri.parse(
     'https://generativelanguage.googleapis.com/v1beta/models/'
-    'gemini-2.5-flash:generateContent?key=API_KEY',
+    'gemini-2.5-flash-lite:generateContent?key=$_geminiApiKey',
   );
 
   final body = jsonEncode({

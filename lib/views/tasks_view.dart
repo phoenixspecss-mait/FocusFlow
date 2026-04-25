@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:FocusFlow/services/platform/task_verifier.dart';
+import 'package:FocusFlow/views/widgets/skeleton_loader.dart';
 import 'package:flutter/material.dart';
 import 'package:FocusFlow/views/app_shell.dart';
 import 'package:FocusFlow/services/auth/auth_service.dart';
@@ -234,7 +235,7 @@ class _TasksViewState extends State<TasksView> {
 ),
               Expanded(
                 child: _loading
-                    ? Center(child: CircularProgressIndicator(color: FF.accent))
+                    ? const TasksViewSkeleton()
                     : _buildList(),
               ),
             ],

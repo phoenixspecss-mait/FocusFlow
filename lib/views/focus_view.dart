@@ -18,7 +18,7 @@ class FocusView extends StatefulWidget {
 }
 
 class _FocusViewState extends State<FocusView>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
 
   // ── Method channel to native Android lock task ────────────────────────────
   static const _lockChannel = MethodChannel('com.example.FocusFlow/lockTask');
@@ -49,6 +49,7 @@ class _FocusViewState extends State<FocusView>
   bool _running       = false;
   int  _sessionsDone  = 0;
   Timer? _timer;
+  DateTime? _endTime;   // wall-clock target — survives background throttling
 
   List<_Mode> _modes = [];
   int _modeIndex = 0;
@@ -79,6 +80,7 @@ class _FocusViewState extends State<FocusView>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pulseController = AnimationController(
       vsync: this, duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
@@ -112,20 +114,44 @@ class _FocusViewState extends State<FocusView>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _stopAppLock();           // always release lock on dispose
     _pulseController.dispose();
     super.dispose();
   }
 
+  // ── App lifecycle — recalculate on resume ──────────────────────────────────
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _running && _endTime != null) {
+      final remaining = _endTime!.difference(DateTime.now()).inSeconds;
+      if (remaining <= 0) {
+        // Timer finished while app was in background
+        _timer?.cancel();
+        _stopAppLock();
+        setState(() {
+          _running       = false;
+          _remainSeconds = 0;
+        });
+        if (_modeIndex == 0) _onPomodoroComplete();
+      } else {
+        // Sync UI to actual remaining time
+        setState(() => _remainSeconds = remaining);
+      }
+    }
+  }
+
   // ── Timer controls ─────────────────────────────────────────────────────────
 
   void _selectMode(int i) {
     _timer?.cancel();
-    _stopAppLock();           // release lock when mode changes
+    _stopAppLock();
     setState(() {
       _modeIndex     = i;
       _running       = false;
+      _endTime       = null;
       _totalSeconds  = _modes[i].minutes * 60;
       _remainSeconds = _modes[i].minutes * 60;
     });
@@ -134,22 +160,31 @@ class _FocusViewState extends State<FocusView>
   void _toggleTimer() {
     if (_running) {
       _timer?.cancel();
-      _stopAppLock();         // release lock on pause
-      setState(() => _running = false);
+      _stopAppLock();
+      setState(() {
+        _running = false;
+        _endTime = null;
+      });
     } else {
-      setState(() => _running = true);
-      _startAppLock();        // acquire lock on start
+      final end = DateTime.now().add(Duration(seconds: _remainSeconds));
+      setState(() {
+        _running = true;
+        _endTime = end;
+      });
+      _startAppLock();
       _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (_remainSeconds <= 1) {
+        final remaining = _endTime!.difference(DateTime.now()).inSeconds;
+        if (remaining <= 0) {
           _timer?.cancel();
-          _stopAppLock();     // release lock on natural completion
+          _stopAppLock();
           setState(() {
             _running       = false;
             _remainSeconds = 0;
+            _endTime       = null;
           });
           if (_modeIndex == 0) _onPomodoroComplete();
         } else {
-          setState(() => _remainSeconds--);
+          setState(() => _remainSeconds = remaining);
         }
       });
     }
@@ -188,9 +223,10 @@ class _FocusViewState extends State<FocusView>
 
   void _reset() {
     _timer?.cancel();
-    _stopAppLock();           // release lock on reset
+    _stopAppLock();
     setState(() {
       _running       = false;
+      _endTime       = null;
       _remainSeconds = _totalSeconds;
     });
   }

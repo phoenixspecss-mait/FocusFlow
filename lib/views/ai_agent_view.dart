@@ -6,6 +6,7 @@ import 'package:FocusFlow/views/app_shell.dart';
 // ─── GEMINI API KEY ────────────────────────────────────────────────────────────
 const String _geminiApiKey = 'API_KEY';
 const String _geminiModel  = 'gemini-2.5-flash';
+
 // ──────────────────────────────────────────────────────────────────────────────
 
 const String _systemPrompt =

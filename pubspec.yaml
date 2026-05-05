@@ -28,8 +28,14 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+
   http: ^1.2.0
   shared_preferences: ^2.3.2
+  file_picker: ^8.0.0
+  image_picker: ^1.1.0
+  syncfusion_flutter_pdf: ^33.2.4
+  syncfusion_flutter_pdfviewer: ^33.2.4
+  gpt_markdown: ^1.0.16
   url_launcher: ^6.3.1
   flutter:
     sdk: flutter

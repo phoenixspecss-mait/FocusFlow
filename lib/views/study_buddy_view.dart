@@ -1,8 +1,64 @@
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:http/http.dart' as http;
 import 'package:FocusFlow/views/app_shell.dart';
+
+// Fixes LaTeX formatting so gpt_markdown can render it correctly.
+String _fixLatex(String text) {
+  // 1. Normalise \[...\] block math → $$...$$
+  text = text.replaceAllMapped(
+    RegExp(r'\\\[(.*?)\\\]', dotAll: true),
+    (m) => '\n\$\$${m[1]!.trim()}\$\$\n',
+  );
+
+  // 2. Collapse multiline $$...$$ onto one line
+  text = text.replaceAllMapped(
+    RegExp(r'\$\$(.*?)\$\$', dotAll: true),
+    (m) {
+      final inner = m[1]!.replaceAll('\n', ' ').trim();
+      return '\n\$\$$inner\$\$\n';
+    },
+  );
+
+  // 3. Normalise \(...\) inline math
+  text = text.replaceAllMapped(
+    RegExp(r'\\\((.*?)\\\)', dotAll: true),
+    (m) {
+      final inner = m[1]!.replaceAll('\n', ' ').trim();
+      return '\\($inner\\)';
+    },
+  );
+
+  // 4. Unicode to LaTeX macro safety net
+  text = text.replaceAll('ℏ', r'\hbar ');
+  text = text.replaceAll('∂', r'\partial ');
+  text = text.replaceAll('Ψ', r'\Psi ');
+  text = text.replaceAll('Ĥ', r'\hat{H} ');
+  text = text.replaceAll('×', r'\times ');
+  text = text.replaceAll('÷', r'\div ');
+  text = text.replaceAll('π', r'\pi ');
+  text = text.replaceAll('θ', r'\theta ');
+  text = text.replaceAll('°', r'^\circ');
+
+  // 5. The "flutter_math_fork" Crash Preventer (NEW)
+  // Strips \vec and \hat because missing font glyphs cause the package to crash
+  // and output raw text.
+  text = text.replaceAllMapped(RegExp(r'\\vec\{([^}]+)\}'), (m) => m[1]!); // \vec{r} -> r
+  text = text.replaceAllMapped(RegExp(r'\\hat\{([^}]+)\}'), (m) => m[1]!); // \hat{H} -> H
+  text = text.replaceAllMapped(RegExp(r'\\vec\s+([a-zA-Z])'), (m) => m[1]!); // \vec r -> r
+  text = text.replaceAllMapped(RegExp(r'\\hat\s+([a-zA-Z])'), (m) => m[1]!); // \hat H -> H
+  
+  // Clean up any remaining problematic commands
+  text = text.replaceAll(r'\mathbf', ''); 
+  text = text.replaceAll(r'\hbar\frac', r'\hbar \frac'); 
+
+  // 6. Collapse triple+ newlines
+  text = text.replaceAll(RegExp(r'\n{3,}'), '\n\n');
+
+  return text;
+}
 
 // ─── Paste the same Gemini API key used in ai_agent_view.dart ────────────────
 const String _geminiApiKey = 'API_KEY';
@@ -132,7 +188,7 @@ class _StudyBuddyViewState extends State<StudyBuddyView>
                     fontSize: 20,
                   ),
                 ),
-                Text('Powered by Gemini',
+                Text('Powered by Gemini 1.5 Flash',
                     style: TextStyle(color: FF.textSec, fontSize: 11)),
               ],
             ),
@@ -181,46 +237,6 @@ class _TopicInput extends StatelessWidget {
     required this.onGenerate,
   });
 
-  // ── Robust JSON array parser for Gemini responses ──────────────────────────
-  List<Map<String, String>> _parseGeminiJsonArray(String raw, {required String expectedKeys}) {
-    // Strip markdown, whitespace
-    var cleaned = raw
-        .replaceAll(RegExp(r'```json\s*', caseSensitive: false), '')
-        .replaceAll(RegExp(r'```\s*$', multiLine: true), '')
-        .replaceAll(RegExp(r'//.*'), '')
-        .trim();
-
-    // Regex to extract outermost array: [ ... ] even if incomplete
-    final arrayMatch = RegExp(r'\[\s*(.*?)\s*\]?', dotAll: true).firstMatch(cleaned);
-    if (arrayMatch == null) {
-      throw FormatException('No JSON array found in Gemini response');
-    }
-    cleaned = '[${arrayMatch.group(1)!}]'; // Ensure closed
-
-    // Fix common Gemini issues: trailing commas, unquoted keys
-    cleaned = cleaned
-        .replaceAll(RegExp(r',\s*(\]|\})'), r'$1') // trailing comma
-        .replaceAll(RegExp(r'"([^"]+)":', caseSensitive: false), r'"$1":'); // keys
-
-    try {
-      final list = jsonDecode(cleaned) as List;
-      final result = <Map<String, String>>[];
-      for (final item in list) {
-        if (item is! Map<String, dynamic>) continue;
-        final front = (item['front'] ?? item['question'] ?? '').toString().trim();
-        final back = (item['back'] ?? item['answer'] ?? '').toString().trim();
-        if (front.isNotEmpty && back.isNotEmpty) {
-          result.add({'front': front, 'back': back});
-        }
-      }
-      if (result.length < 3 || result.length > 15) {
-        throw FormatException('Invalid number of valid cards: ${result.length}');
-      }
-      return result.take(12).toList();
-    } catch (e) {
-      throw FormatException('Failed to parse Gemini JSON: $e\nRaw: $raw');
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -345,38 +361,15 @@ Example format:
 
       final raw = await _callGemini(prompt, maxTokens: 1200, temp: 0.5, expectJson: true);
 
-      // strip markdown fences if present
-      var cleaned = raw
-          .replaceAll(RegExp(r'```json', caseSensitive: false), '')
-          .replaceAll(RegExp(r'```'), '')
-          .trim();
-
-      List list;
-      try {
-        final parsed = jsonDecode(cleaned);
-        if (parsed is List) {
-          list = parsed;
-        } else if (parsed is Map && parsed.values.any((v) => v is List)) {
-          list = parsed.values.firstWhere((v) => v is List) as List;
-        } else {
-          throw FormatException();
-        }
-      } catch (_) {
-        final start = cleaned.indexOf('[');
-        final end   = cleaned.lastIndexOf(']');
-        if (start == -1 || end == -1) {
-          throw Exception('Invalid JSON from Gemini:\\n$raw');
-        }
-        cleaned = cleaned.substring(start, end + 1);
-        list = jsonDecode(cleaned) as List;
-      }
+      final list = jsonDecode(raw) as List;
 
       setState(() {
         _cards = list
             .map<Map<String, String>>((e) => {
-                  'front': e['front'] as String,
-                  'back':  e['back']  as String,
+                  'front': (e['front'] ?? e['question'] ?? '').toString().trim(),
+                  'back':  (e['back']  ?? e['answer']   ?? '').toString().trim(),
                 })
+            .where((c) => c['front']!.isNotEmpty && c['back']!.isNotEmpty)
             .toList();
         _loading = false;
       });
@@ -725,39 +718,16 @@ Example:
 
       final raw = await _callGemini(prompt, maxTokens: 1500, temp: 0.4, expectJson: true);
 
-      var cleaned = raw
-          .replaceAll(RegExp(r'```json', caseSensitive: false), '')
-          .replaceAll(RegExp(r'```'), '')
-          .trim();
-
-      List list;
-      try {
-        final parsed = jsonDecode(cleaned);
-        if (parsed is List) {
-          list = parsed;
-        } else if (parsed is Map && parsed.values.any((v) => v is List)) {
-          list = parsed.values.firstWhere((v) => v is List) as List;
-        } else {
-          throw FormatException();
-        }
-      } catch (_) {
-        final start = cleaned.indexOf('[');
-        final end   = cleaned.lastIndexOf(']');
-        if (start == -1 || end == -1) {
-          throw Exception('Invalid JSON from Gemini:\\n$raw');
-        }
-        cleaned = cleaned.substring(start, end + 1);
-        list = jsonDecode(cleaned) as List;
-      }
+      final list = jsonDecode(raw) as List;
 
       setState(() {
         _questions = list.map<QuizQuestion>((e) {
           final opts = List<String>.from(e['options'] as List);
           return QuizQuestion(
-            question: e['question'] as String,
+            question: (e['question'] ?? '').toString(),
             options: opts,
             correctIndex: (e['correct'] as num).toInt(),
-            explanation: e['explanation'] as String,
+            explanation: (e['explanation'] ?? '').toString(),
           );
         }).toList();
         _loading = false;
@@ -1227,8 +1197,16 @@ Create study notes about: "$topic"
 Format: $_style
 $styleInstruction
 
-Keep the total response under 400 words. Make it student-friendly, accurate, and easy to review.
-Do not add any preamble like "Here are your notes" — start the content directly.
+MATH FORMATTING (follow strictly):
+- Inline math: use \\( and \\)  e.g. \\(E = mc^2\\)
+- Block math: use \$\$ and \$\$  e.g. \$\$x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}\$\$
+- CRITICAL: Add spaces between all LaTeX commands (e.g., write \\hbar \\frac instead of \\hbar\\frac).
+- CRITICAL: DO NOT use accents like \\vec, \\hat, or \\mathbf. Just use standard variables (e.g., write H instead of \\hat{H}, write r instead of \\vec{r}).
+- Use pure LaTeX macros for all symbols (e.g., \\hbar, \\partial, \\Psi). DO NOT use raw Unicode. 
+- Never use bare dollar signs like \$E\$ — always use \\(E\\)
+
+Keep under 400 words. Student-friendly, accurate, easy to review.
+Do not add preamble — start content directly.
 ''';
 
       final result = await _callGemini(prompt, maxTokens: 1000, temp: 0.6);
@@ -1336,12 +1314,14 @@ Do not add any preamble like "Here are your notes" — start the content directl
                       ],
                     ),
                     const SizedBox(height: 16),
-                    Text(
-                      _notes,
-                      style: TextStyle(
-                        color: FF.textPri,
-                        fontSize: 14,
-                        height: 1.7,
+                    SelectionArea(
+                      child: GptMarkdown(
+                        _fixLatex(_notes),
+                        style: TextStyle(
+                          color: FF.textPri,
+                          fontSize: 14,
+                          height: 1.7,
+                        ),
                       ),
                     ),
                   ],

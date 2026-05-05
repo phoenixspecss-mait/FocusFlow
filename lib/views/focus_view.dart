@@ -574,7 +574,7 @@ class _FocusViewState extends State<FocusView>
 }
 
 // ── PDF full-screen overlay widget ────────────────────────────────────────────
-class _PdfOverlay extends StatelessWidget {
+class _PdfOverlay extends StatefulWidget {
   final String path;
   final String name;
   final PdfViewerController controller;
@@ -594,7 +594,21 @@ class _PdfOverlay extends StatelessWidget {
   });
 
   @override
+  State<_PdfOverlay> createState() => _PdfOverlayState();
+}
+
+class _PdfOverlayState extends State<_PdfOverlay>
+    with AutomaticKeepAliveClientMixin {
+
+  @override
+  bool get wantKeepAlive => true;
+
+  // Keep a local copy of the file so SfPdfViewer is never recreated
+  late final File _file = File(widget.path);
+
+  @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Material(
       color: FF.bg,
       child: Column(children: [
@@ -609,65 +623,83 @@ class _PdfOverlay extends StatelessWidget {
               border: Border(bottom: BorderSide(color: FF.divider)),
             ),
             child: Row(children: [
-              // Back to timer
               IconButton(
                 icon: Icon(Icons.arrow_back_rounded, color: FF.textPri),
-                onPressed: onClose,
+                onPressed: widget.onClose,
                 tooltip: 'Back to timer',
               ),
               const SizedBox(width: 4),
               Expanded(
                 child: Text(
-                  name,
+                  widget.name,
                   style: TextStyle(color: FF.textPri, fontSize: 15, fontWeight: FontWeight.w600),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              // Live timer pill — always visible while reading
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: isRunning ? modeColor.withOpacity(0.15) : FF.card,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: isRunning ? modeColor.withOpacity(0.5) : FF.divider,
-                  ),
-                ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  if (isRunning) ...[
-                    Icon(Icons.timer_rounded, color: modeColor, size: 13),
-                    const SizedBox(width: 4),
-                  ],
-                  Text(
-                    timerLabel,
-                    style: TextStyle(
-                      color: isRunning ? modeColor : FF.textSec,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ]),
+              // Timer pill — only this part updates each second
+              _TimerPill(
+                timerLabel: widget.timerLabel,
+                modeColor: widget.modeColor,
+                isRunning: widget.isRunning,
               ),
               const SizedBox(width: 8),
             ]),
           ),
         ),
 
-        // ── PDF viewer ───────────────────────────────────────────────────────
+        // ── PDF viewer — never rebuilt after first load ───────────────────────
         Expanded(
           child: SfPdfViewer.file(
-            File(path),
-            controller: controller,
+            _file,
+            controller: widget.controller,
             pageLayoutMode: PdfPageLayoutMode.continuous,
             scrollDirection: PdfScrollDirection.vertical,
             canShowScrollHead: true,
             canShowScrollStatus: true,
             enableDoubleTapZooming: true,
-            onDocumentLoadFailed: (details) {
-              // Show error inside the viewer area
-            },
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── Separate widget so ONLY the timer label rebuilds each second ──────────────
+class _TimerPill extends StatelessWidget {
+  final String timerLabel;
+  final Color modeColor;
+  final bool isRunning;
+
+  const _TimerPill({
+    required this.timerLabel,
+    required this.modeColor,
+    required this.isRunning,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: isRunning ? modeColor.withOpacity(0.15) : FF.card,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isRunning ? modeColor.withOpacity(0.5) : FF.divider,
+        ),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        if (isRunning) ...[
+          Icon(Icons.timer_rounded, color: modeColor, size: 13),
+          const SizedBox(width: 4),
+        ],
+        Text(
+          timerLabel,
+          style: TextStyle(
+            color: isRunning ? modeColor : FF.textSec,
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
       ]),
